@@ -773,7 +773,8 @@ fn install_text(base: &str, token: &str) -> String {
     format!(
         "Claude Code:\n  claude mcp add --scope user --transport http smoko {base}/mcp --header \"Authorization: Bearer {token}\"\n\n\
          Codex:\n  export SMOKO_TOKEN={token}   # add to your shell profile\n  codex mcp add smoko --url {base}/mcp --bearer-token-env-var SMOKO_TOKEN\n\n\
-         pi, or any client that takes a Streamable HTTP URL:\n  {base}/mcp/{token}\n\n\
+         pi (0.99 or later): add this to ~/.pi/agent/mcp.json, then restart pi:\n  {{ \"mcpServers\": {{ \"smoko\": {{ \"url\": \"{base}/mcp/{token}\" }} }} }}\n\n\
+         Any other MCP client that takes a Streamable HTTP URL:\n  {base}/mcp/{token}\n\n\
          Terminal:\n  smoko login --relay {base} --token {token}"
     )
 }

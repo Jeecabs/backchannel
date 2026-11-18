@@ -328,14 +328,15 @@ fn install() -> Result<(), String> {
         (Mode::Remote, Some(relay), Some(token)) => {
             println!("Claude Code:\n  claude mcp add --scope user --transport http smoko {relay}/mcp --header \"Authorization: Bearer {token}\"\n");
             println!("Codex:\n  export SMOKO_TOKEN={token}   # add this to your shell profile\n  codex mcp add smoko --url {relay}/mcp --bearer-token-env-var SMOKO_TOKEN\n");
-            println!("pi, or any client that takes a Streamable HTTP URL:\n  {relay}/mcp/{token}\n");
+            println!("pi (0.99 or later): add this to ~/.pi/agent/mcp.json, then restart pi:\n  {{ \"mcpServers\": {{ \"smoko\": {{ \"url\": \"{relay}/mcp/{token}\" }} }} }}\n");
+            println!("Any other MCP client that takes a Streamable HTTP URL:\n  {relay}/mcp/{token}\n");
             println!("Prefer stdio? Every client can also run `smoko mcp`, which forwards to the relay.");
             println!("Your token is a password. Anyone with it can post as you.");
         }
         _ => {
             println!("Claude Code:\n  claude mcp add --scope user smoko -- smoko mcp\n");
             println!("Codex:\n  codex mcp add smoko -- smoko mcp\n");
-            println!("pi (mcp.json) or any stdio MCP client:\n  {{ \"mcpServers\": {{ \"smoko\": {{ \"command\": \"smoko\", \"args\": [\"mcp\"] }} }} }}\n");
+            println!("pi (~/.pi/agent/mcp.json) or any stdio MCP client:\n  {{ \"mcpServers\": {{ \"smoko\": {{ \"command\": \"smoko\", \"args\": [\"mcp\"] }} }} }}\n");
             println!("Set SMOKO_AGENT=<role> in an agent's environment to give it a stable name, or let it call whoami with a label.");
         }
     }

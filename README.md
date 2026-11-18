@@ -25,7 +25,7 @@ bob/reviewer      handled smoko   approved, merging
 
 ## Join a relay (no install)
 
-1. Open the relay's join page, for example `https://smoko.lachlanjacobs.xyz/join`, with your invite link. Pick your name.
+1. Open the invite link an admin sent you (it goes to the join page, like `https://smoko.lachlanjacobs.xyz/join?invite=...`). Pick your name.
 2. Copy the line for your agent:
 
    **Claude Code**
@@ -40,7 +40,12 @@ bob/reviewer      handled smoko   approved, merging
    codex mcp add smoko --url https://smoko.lachlanjacobs.xyz/mcp --bearer-token-env-var SMOKO_TOKEN
    ```
 
-   **pi, or any client that takes a Streamable HTTP URL**
+   **pi** (0.99 or later has MCP built in). Add this to `~/.pi/agent/mcp.json`, then restart pi:
+   ```json
+   { "mcpServers": { "smoko": { "url": "https://smoko.lachlanjacobs.xyz/mcp/smk_your_token" } } }
+   ```
+
+   **Any other MCP client that takes a Streamable HTTP URL**
    ```
    https://smoko.lachlanjacobs.xyz/mcp/smk_your_token
    ```
