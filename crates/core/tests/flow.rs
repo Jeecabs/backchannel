@@ -2,12 +2,12 @@
 //! End-to-end protocol behaviour against an in-memory authority.
 
 use serde_json::json;
-use smoko_core::authority::{Authority, BoardSpec, Mode, Profile};
-use smoko_core::crypto::{sign_envelope, verify_envelope, KeyPair};
-use smoko_core::inbox::Inbox;
-use smoko_core::sqlite::Sqlite;
-use smoko_core::tools::{call, Ctx, Me, Outcome};
-use smoko_core::*;
+use backchannel_core::authority::{Authority, BoardSpec, Mode, Profile};
+use backchannel_core::crypto::{sign_envelope, verify_envelope, KeyPair};
+use backchannel_core::inbox::Inbox;
+use backchannel_core::sqlite::Sqlite;
+use backchannel_core::tools::{call, Ctx, Me, Outcome};
+use backchannel_core::*;
 
 fn now() -> i64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as i64
@@ -37,7 +37,7 @@ fn two_people_talk_and_hand_off_work() {
     call(&mut a, "whoami", &json!({})).unwrap();
     call(&mut b, "whoami", &json!({})).unwrap();
 
-    // Broadcast an ask. Bob follows the smoko by default, so he gets it.
+    // Broadcast an ask. Bob follows smoko by default, so he gets it.
     let posted = text(call(&mut a, "post", &json!({ "board": "smoko", "kind": "ask", "body": "can someone review PR 42?" })).unwrap());
     let id = posted.split("id ").nth(1).unwrap()[..26].to_string();
     let got = text(call(&mut b, "inbox", &json!({})).unwrap());
@@ -94,13 +94,13 @@ fn signatures_and_key_pinning() {
     let k = KeyPair::generate();
     let env = Envelope {
         v: PROTOCOL.into(),
-        id: smoko_core::crypto::ulid(now()),
+        id: backchannel_core::crypto::ulid(now()),
         board: "smoko".into(),
         from: Author { name: "dave".into(), agent: "cli".into(), key: k.public_key.clone() },
         kind: Kind::Note,
         body: "hello".into(),
         title: None, ref_: None, mentions: None, tags: None, data: None, lease: None, expires: None, ext: None,
-        ts: smoko_core::crypto::iso(now()),
+        ts: backchannel_core::crypto::iso(now()),
         sig: String::new(),
     };
     let signed = sign_envelope(env.clone(), &k);
@@ -118,14 +118,14 @@ fn signatures_and_key_pinning() {
     // Someone else's key cannot post as dave.
     let mallory = KeyPair::generate();
     let mut imp = env;
-    imp.id = smoko_core::crypto::ulid(now());
+    imp.id = backchannel_core::crypto::ulid(now());
     imp.from.key = mallory.public_key.clone();
     assert_eq!(auth.accept(sign_envelope(imp, &mallory)).err().unwrap().code, Code::Forbidden);
 
     // A replica re-verifies and pins keys.
     let replica = Authority::new(Sqlite::memory().unwrap(), Mode::Replica, now).unwrap();
-    assert_eq!(replica.ingest(&first).unwrap(), smoko_core::authority::Ingest::Stored);
+    assert_eq!(replica.ingest(&first).unwrap(), backchannel_core::authority::Ingest::Stored);
     let mut bad = first.clone();
-    bad.envelope.id = smoko_core::crypto::ulid(now());
-    assert_eq!(replica.ingest(&bad).unwrap(), smoko_core::authority::Ingest::Rejected);
+    bad.envelope.id = backchannel_core::crypto::ulid(now());
+    assert_eq!(replica.ingest(&bad).unwrap(), backchannel_core::authority::Ingest::Rejected);
 }

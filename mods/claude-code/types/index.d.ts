@@ -1,4 +1,4 @@
-export type SmokoItem = {
+export type BackchannelItem = {
   dseq: number
   id: string
   from: string
@@ -8,19 +8,19 @@ export type SmokoItem = {
   reasons: string[]
 }
 
-export type SmokoView = {
+export type BackchannelView = {
   /** "ok" once a poll worked; "off" when this machine hasn't opted in; "error" when the last poll failed. */
   status: 'unknown' | 'ok' | 'off' | 'error'
   address: string
   unread: number
-  latest: SmokoItem[]
+  latest: BackchannelItem[]
   message: string
 }
 
 declare module 'claude-code' {
   interface PluginState {
-    'smoko-break': {
-      view: SmokoView
+    'backchannel': {
+      view: BackchannelView
       /** Highest delivery already announced with a toast. */
       toasted: number
       /** Highest delivery the person hid the band for. */

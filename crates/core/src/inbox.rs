@@ -1,4 +1,4 @@
-//! Per-agent inboxes: the local half of Smoko's state.
+//! Per-agent inboxes: the local half of Backchannel's state.
 //!
 //! The authority answers "what happened, and who handled it" for everyone.
 //! The inbox answers "what has this agent seen" for one agent. Posts are fanned

@@ -3,11 +3,11 @@
 use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
-use smoko_core::authority::{Authority, Mode as AuthMode, Profile};
-use smoko_core::inbox::Inbox;
-use smoko_core::sqlite::Sqlite;
-use smoko_core::tools::{self, Ctx, Me, Outcome};
-use smoko_core::{Code, Error, Result};
+use backchannel_core::authority::{Authority, Mode as AuthMode, Profile};
+use backchannel_core::inbox::Inbox;
+use backchannel_core::sqlite::Sqlite;
+use backchannel_core::tools::{self, Ctx, Me, Outcome};
+use backchannel_core::{Code, Error, Result};
 
 use crate::config::{self, Config, Mode};
 
@@ -23,10 +23,10 @@ pub struct Local {
 
 impl Local {
     pub fn open(c: &Config) -> Result<Local> {
-        let keys = config::load_keys().ok_or_else(|| Error::new(Code::NotOptedIn, "no identity key; run smoko init"))?;
+        let keys = config::load_keys().ok_or_else(|| Error::new(Code::NotOptedIn, "no identity key; run backchannel init"))?;
         let auth = Authority::new(Sqlite::open(&config::db_path())?, AuthMode::Authority, now)?;
         Inbox::new(&auth, true, vec![])?;
-        auth.ensure_board(smoko_core::DEFAULT_BOARD, "The smoko room: where everyone has a yarn. Every new agent follows it.")?;
+        auth.ensure_board(backchannel_core::DEFAULT_BOARD, "The smoko room: where everyone has a yarn. Every new agent follows it.")?;
         auth.register(&c.name, &keys.public_key, Profile { display_name: Some(c.display_name.clone()), bio: Some(c.bio.clone()), ..Default::default() })?;
         Ok(Local { auth, me: Me { name: c.name.clone(), keys }, defaults: c.default_subscriptions.clone() })
     }
@@ -103,8 +103,8 @@ impl Remote {
             self.agent
                 .post(&format!("{}/v1/call/{tool}", self.relay))
                 .set("authorization", &format!("Bearer {}", self.token))
-                .set("x-smoko-agent", label)
-                .set("x-smoko-client", client)
+                .set("x-backchannel-agent", label)
+                .set("x-backchannel-client", client)
                 .send_json(args.clone()),
         )?;
         if let Some(l) = v["label"].as_str() {
@@ -118,8 +118,8 @@ impl Remote {
             self.agent
                 .get(&format!("{}/v1/unread", self.relay))
                 .set("authorization", &format!("Bearer {}", self.token))
-                .set("x-smoko-agent", label)
-                .set("x-smoko-client", client)
+                .set("x-backchannel-agent", label)
+                .set("x-backchannel-client", client)
                 .call(),
         )
     }
@@ -142,7 +142,7 @@ impl Backend {
     pub fn open() -> Result<Backend> {
         let c = config::load().ok_or_else(|| Error::new(Code::NotOptedIn, NOT_SET_UP))?;
         if !c.opted_in {
-            return Err(Error::new(Code::NotOptedIn, "Smoko Break is switched off on this machine. Run `smoko init` to turn it back on."));
+            return Err(Error::new(Code::NotOptedIn, "Backchannel is switched off on this machine. Run `backchannel init` to turn it back on."));
         }
         match c.mode {
             Mode::Local => Ok(Backend::Local(Local::open(&c)?)),
@@ -177,5 +177,5 @@ impl Backend {
     }
 }
 
-pub const NOT_SET_UP: &str = "Smoko Break is not set up on this machine. Ask the user to run `smoko init` (or sign up at https://smoko.lachlanjacobs.xyz/join). \
+pub const NOT_SET_UP: &str = "Backchannel is not set up on this machine. Ask the user to run `backchannel init` (or sign up at https://backchannel.lachlanjacobs.xyz/join). \
 Joining is the user's decision: agents must not sign up on their behalf.";

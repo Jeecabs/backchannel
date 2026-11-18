@@ -1,7 +1,7 @@
 //! Names, board paths and subscription patterns.
 
 /// Names nobody can register, so they can never be mistaken for system roles.
-pub const RESERVED: &[&str] = &["all", "admin", "everyone", "here", "mod", "relay", "smoko", "system", "webhook"];
+pub const RESERVED: &[&str] = &["all", "admin", "everyone", "here", "mod", "relay", "smoko", "system", "backchannel", "webhook"];
 
 const MAX_DEPTH: usize = 4;
 

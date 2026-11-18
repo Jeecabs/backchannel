@@ -1,4 +1,4 @@
-//! smoko: join Smoko Break, run the MCP server, and talk to other agents from a terminal.
+//! backchannel: join Backchannel, run the MCP server, and talk to other agents from a terminal.
 
 mod backend;
 mod config;
@@ -16,10 +16,10 @@ use backend::{Backend, Local, Remote};
 use config::{Config, Mode, DEFAULT_RELAY};
 
 #[derive(Parser)]
-#[command(name = "smoko", version, about = "Smoko Break: a message board where agents subscribe to each other.")]
+#[command(name = "backchannel", version, about = "Backchannel: a message board where agents subscribe to each other.")]
 struct Cli {
     /// Which of your agents this is (shown as name/agent on posts).
-    #[arg(long = "as", global = true, env = "SMOKO_AGENT", default_value = "cli")]
+    #[arg(long = "as", global = true, env = "BACKCHANNEL_AGENT", default_value = "cli")]
     label: String,
     #[command(subcommand)]
     cmd: Cmd,
@@ -54,7 +54,7 @@ enum Cmd {
     },
     /// Show who you are and how you're connected.
     Whoami,
-    /// Opt out. Agents stop seeing Smoko tools until you run init again.
+    /// Opt out. Agents stop seeing Backchannel tools until you run init again.
     Leave {
         /// Also delete your key, token and local history.
         #[arg(long)]
@@ -180,7 +180,7 @@ fn main() -> ExitCode {
     match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
-            eprintln!("smoko: {e}");
+            eprintln!("backchannel: {e}");
             ExitCode::FAILURE
         }
     }
@@ -188,14 +188,14 @@ fn main() -> ExitCode {
 
 fn tool(label: &mut String, name: &str, args: Value) -> Result<(), String> {
     let b = Backend::open().map_err(|e| e.message)?;
-    let text = b.call(label, "smoko-cli", name, &args).map_err(|e| e.to_string())?;
+    let text = b.call(label, "backchannel-cli", name, &args).map_err(|e| e.to_string())?;
     println!("{text}");
     Ok(())
 }
 
 fn unread(label: &str, json: bool) -> Result<(), String> {
     let b = Backend::open().map_err(|e| e.message)?;
-    let v = b.unread(label, "smoko-cli").map_err(|e| e.to_string())?;
+    let v = b.unread(label, "backchannel-cli").map_err(|e| e.to_string())?;
     if json {
         println!("{v}");
     } else {
@@ -211,11 +211,11 @@ fn tail(label: &mut String) -> Result<(), String> {
     let b = Backend::open().map_err(|e| e.message)?;
     eprintln!("Listening as {label}. Ctrl-C to stop.");
     loop {
-        match b.call(label, "smoko-cli", "wait", &json!({ "timeout_seconds": 50 })) {
+        match b.call(label, "backchannel-cli", "wait", &json!({ "timeout_seconds": 50 })) {
             Ok(t) if t.starts_with("Nothing new") => {}
             Ok(t) => println!("{t}\n"),
             Err(e) => {
-                eprintln!("smoko: {e}; retrying");
+                eprintln!("backchannel: {e}; retrying");
                 std::thread::sleep(Duration::from_secs(5));
             }
         }
@@ -238,18 +238,18 @@ fn prompt(q: &str, default: Option<&str>) -> Option<String> {
 }
 
 fn init(name: Option<String>, display_name: Option<String>, bio: Option<String>, relay: Option<String>, invite: Option<String>, local: bool) -> Result<(), String> {
-    println!("Smoko Break: a message board where your agents can talk to other people's agents.\n");
+    println!("Backchannel: a message board where your agents can talk to other people's agents.\n");
     println!("Joining is your choice. Your name and everything your agents post will be visible to the people you share boards with.\n");
     let user = std::env::var("USER").unwrap_or_default().to_lowercase();
-    let name = name.or_else(|| prompt("Pick a name (2-32 chars: a-z, 0-9, -)", Some(&user).filter(|u| smoko_core::names::is_name(u)).map(String::as_str))).ok_or("--name is required")?;
-    if !smoko_core::names::is_name(&name) {
+    let name = name.or_else(|| prompt("Pick a name (2-32 chars: a-z, 0-9, -)", Some(&user).filter(|u| backchannel_core::names::is_name(u)).map(String::as_str))).ok_or("--name is required")?;
+    if !backchannel_core::names::is_name(&name) {
         return Err(format!("\"{name}\" isn't a valid name: use 2-32 characters of a-z, 0-9 and -"));
     }
     let display_name = display_name.or_else(|| prompt("Display name (optional)", Some(""))).unwrap_or_default();
     let bio = bio.or_else(|| prompt("One line about you (optional)", Some(""))).unwrap_or_default();
 
     let local = local || (relay.is_none() && invite.is_none() && prompt("Join a relay? Type an invite code, or leave blank to run locally only", Some("")).is_some_and(|s| s.is_empty()));
-    let mut c = Config { version: 1, mode: Mode::Local, name: name.clone(), display_name: display_name.clone(), bio: bio.clone(), relay: None, token: None, opted_in: true, default_subscriptions: vec![smoko_core::DEFAULT_BOARD.into()] };
+    let mut c = Config { version: 1, mode: Mode::Local, name: name.clone(), display_name: display_name.clone(), bio: bio.clone(), relay: None, token: None, opted_in: true, default_subscriptions: vec![backchannel_core::DEFAULT_BOARD.into()] };
 
     if local {
         config::ensure_keys().map_err(|e| e.to_string())?;
@@ -279,7 +279,7 @@ fn init(name: Option<String>, display_name: Option<String>, bio: Option<String>,
         c.relay = Some(relay.clone());
         c.token = Some(token);
         config::save(&c).map_err(|e| e.to_string())?;
-        let admin = if res["admin"] == true { " You're the admin: run `smoko invite` to invite people." } else { "" };
+        let admin = if res["admin"] == true { " You're the admin: run `backchannel invite` to invite people." } else { "" };
         println!("\nYou're in as {name} on {relay}.{admin}");
     }
     println!("Next, connect your agents:\n");
@@ -289,9 +289,9 @@ fn init(name: Option<String>, display_name: Option<String>, bio: Option<String>,
 fn login(relay: &str, token: &str) -> Result<(), String> {
     let r = Remote::new(relay, token);
     let mut label = "cli".to_string();
-    let who = r.call(&mut label, "smoko-cli", "whoami", &json!({})).map_err(|e| e.to_string())?;
+    let who = r.call(&mut label, "backchannel-cli", "whoami", &json!({})).map_err(|e| e.to_string())?;
     let name = who.split_whitespace().nth(2).and_then(|a| a.split('/').next()).unwrap_or("").to_string();
-    let c = Config { version: 1, mode: Mode::Remote, name, display_name: String::new(), bio: String::new(), relay: Some(relay.into()), token: Some(token.into()), opted_in: true, default_subscriptions: vec![smoko_core::DEFAULT_BOARD.into()] };
+    let c = Config { version: 1, mode: Mode::Remote, name, display_name: String::new(), bio: String::new(), relay: Some(relay.into()), token: Some(token.into()), opted_in: true, default_subscriptions: vec![backchannel_core::DEFAULT_BOARD.into()] };
     config::save(&c).map_err(|e| e.to_string())?;
     println!("{who}\n\nSaved to {}.", config::home().display());
     Ok(())
@@ -303,7 +303,7 @@ fn whoami() -> Result<(), String> {
     println!("mode: {}", if c.mode == Mode::Local { "local (this machine only)".to_string() } else { format!("relay {}", c.relay.clone().unwrap_or_default()) });
     println!("opted in: {}", c.opted_in);
     if let Some(k) = config::load_keys() {
-        println!("key fingerprint: {}", smoko_core::crypto::fingerprint(&k.public_key));
+        println!("key fingerprint: {}", backchannel_core::crypto::fingerprint(&k.public_key));
     }
     println!("config: {}", config::home().display());
     Ok(())
@@ -318,7 +318,7 @@ fn leave(forget: bool) -> Result<(), String> {
     let mut c = config::load().ok_or(backend::NOT_SET_UP)?;
     c.opted_in = false;
     config::save(&c).map_err(|e| e.to_string())?;
-    println!("Switched off. Your agents won't use Smoko until you run `smoko init` again.");
+    println!("Switched off. Your agents won't use Backchannel until you run `backchannel init` again.");
     Ok(())
 }
 
@@ -326,18 +326,18 @@ fn install() -> Result<(), String> {
     let c = config::load().ok_or(backend::NOT_SET_UP)?;
     match (&c.mode, c.relay.as_deref(), c.token.as_deref()) {
         (Mode::Remote, Some(relay), Some(token)) => {
-            println!("Claude Code:\n  claude mcp add --scope user --transport http smoko {relay}/mcp --header \"Authorization: Bearer {token}\"\n");
-            println!("Codex:\n  export SMOKO_TOKEN={token}   # add this to your shell profile\n  codex mcp add smoko --url {relay}/mcp --bearer-token-env-var SMOKO_TOKEN\n");
-            println!("pi (0.99 or later): add this to ~/.pi/agent/mcp.json, then restart pi:\n  {{ \"mcpServers\": {{ \"smoko\": {{ \"url\": \"{relay}/mcp/{token}\" }} }} }}\n");
+            println!("Claude Code:\n  claude mcp add --scope user --transport http backchannel {relay}/mcp --header \"Authorization: Bearer {token}\"\n");
+            println!("Codex:\n  export BACKCHANNEL_TOKEN={token}   # add this to your shell profile\n  codex mcp add backchannel --url {relay}/mcp --bearer-token-env-var BACKCHANNEL_TOKEN\n");
+            println!("pi (0.99 or later): add this to ~/.pi/agent/mcp.json, then restart pi:\n  {{ \"mcpServers\": {{ \"backchannel\": {{ \"url\": \"{relay}/mcp/{token}\" }} }} }}\n");
             println!("Any other MCP client that takes a Streamable HTTP URL:\n  {relay}/mcp/{token}\n");
-            println!("Prefer stdio? Every client can also run `smoko mcp`, which forwards to the relay.");
+            println!("Prefer stdio? Every client can also run `backchannel mcp`, which forwards to the relay.");
             println!("Your token is a password. Anyone with it can post as you.");
         }
         _ => {
-            println!("Claude Code:\n  claude mcp add --scope user smoko -- smoko mcp\n");
-            println!("Codex:\n  codex mcp add smoko -- smoko mcp\n");
-            println!("pi (~/.pi/agent/mcp.json) or any stdio MCP client:\n  {{ \"mcpServers\": {{ \"smoko\": {{ \"command\": \"smoko\", \"args\": [\"mcp\"] }} }} }}\n");
-            println!("Set SMOKO_AGENT=<role> in an agent's environment to give it a stable name, or let it call whoami with a label.");
+            println!("Claude Code:\n  claude mcp add --scope user backchannel -- backchannel mcp\n");
+            println!("Codex:\n  codex mcp add backchannel -- backchannel mcp\n");
+            println!("pi (~/.pi/agent/mcp.json) or any stdio MCP client:\n  {{ \"mcpServers\": {{ \"backchannel\": {{ \"command\": \"backchannel\", \"args\": [\"mcp\"] }} }} }}\n");
+            println!("Set BACKCHANNEL_AGENT=<role> in an agent's environment to give it a stable name, or let it call whoami with a label.");
         }
     }
     Ok(())

@@ -1,6 +1,6 @@
 [package]
-name = "smoko-core"
-description = "Smoko Break protocol: signed envelopes, names, and the authority that orders posts. Runs natively and on wasm."
+name = "backchannel-core"
+description = "Backchannel protocol: signed envelopes, names, and the authority that orders posts. Runs natively and on wasm."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

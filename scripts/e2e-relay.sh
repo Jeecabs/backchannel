@@ -7,16 +7,16 @@ BOOT=${BOOTSTRAP_CODE:-dev-bootstrap-code}
 j() { python3 -c "import json,sys; d=json.load(sys.stdin); print(eval(sys.argv[1]))" "$1"; }
 call() {
   local args="${4:-}"; [ -z "$args" ] && args="{}"
-  curl -s -X POST "$B/v1/call/$2" -H "authorization: Bearer $1" -H "x-smoko-agent: ${3:-cli}" -H 'content-type: application/json' -d "$args" | j 'd.get("text") or d'
+  curl -s -X POST "$B/v1/call/$2" -H "authorization: Bearer $1" -H "x-backchannel-agent: ${3:-cli}" -H 'content-type: application/json' -d "$args" | j 'd.get("text") or d'
 }
 expect() { grep -q -- "$1" <<<"$2" || { echo "FAIL: expected '$1' in:"; echo "$2"; exit 1; }; echo "ok: $1"; }
 
-curl -s --retry 60 --retry-connrefused --retry-delay 2 "$B/.well-known/smoko" >/dev/null
+curl -s --retry 60 --retry-connrefused --retry-delay 2 "$B/.well-known/backchannel" >/dev/null
 
 ADMIN=$(curl -sf -X POST "$B/v1/signup" -H 'content-type: application/json' -d "{\"name\":\"lachlan\",\"display_name\":\"Lachlan\",\"invite\":\"$BOOT\"}" | j 'd["token"]')
 INV=$(call "$ADMIN" create_invite cli '{"uses":2}')
-CODE=$(grep -oE 'SMOKO-[0-9A-Z]{4}-[0-9A-Z]{4}' <<<"$INV" | head -1)
-expect "SMOKO-" "$INV"
+CODE=$(grep -oE 'CHAN-[0-9A-Z]{4}-[0-9A-Z]{4}' <<<"$INV" | head -1)
+expect "CHAN-" "$INV"
 BOB=$(curl -sf -X POST "$B/v1/signup" -H 'content-type: application/json' -d "{\"name\":\"bob\",\"invite\":\"$CODE\"}" | j 'd["token"]')
 
 # Random people can't just join: no invite means a request the admin must approve.
@@ -31,11 +31,11 @@ expect "collected" "$(curl -sf "$B/v1/signup/status?id=$RID&secret=$RS")"
 # Members can't invite.
 expect "only admins" "$(curl -s -X POST "$B/v1/call/create_invite" -H "authorization: Bearer $BOB" -H 'content-type: application/json' -d '{}')"
 
-# Bob's agent asks the smoko and mentions lachlan; lachlan's new agent sees it.
+# Bob's agent asks smoko and mentions lachlan; lachlan's new agent sees it.
 POSTED=$(call "$BOB" post reviewer '{"board":"smoko","kind":"ask","body":"anyone free to look at PR 7? @lachlan"}')
 ID=$(grep -oE 'id [0-9A-Z]{26}' <<<"$POSTED" | cut -c4-)
 IN=$(call "$ADMIN" inbox frontend)
-expect "PR 7" "$IN"; expect "mentions you" "$IN"; expect "SECURITY NOTE" "$IN"; expect "END OF SMOKO MESSAGES" "$IN"
+expect "PR 7" "$IN"; expect "mentions you" "$IN"; expect "SECURITY NOTE" "$IN"; expect "END OF BACKCHANNEL MESSAGES" "$IN"
 
 # Claim, conflict, handled: global state everyone sees.
 ARGS_ID='{"id":"'"$ID"'"}'

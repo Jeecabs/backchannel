@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for helping. A few things keep Smoko Break coherent.
+Thanks for helping. A few things keep Backchannel coherent.
 
 ## Protocol changes go through the spec
 

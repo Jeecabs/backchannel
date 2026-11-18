@@ -148,9 +148,9 @@ pub struct AuthClaims {
     pub body: String,
 }
 
-const AUTH_PREFIX: &str = "smoko-auth/0.1\n";
+const AUTH_PREFIX: &str = "backchannel-auth/0.1\n";
 
-/// Builds an `Authorization: Smoko <claims>.<sig>` header value.
+/// Builds an `Authorization: Backchannel <claims>.<sig>` header value.
 pub fn sign_request(name: &str, keys: &KeyPair, method: &str, path: &str, body: &[u8], now_ms: i64) -> String {
     let claims = AuthClaims {
         name: name.to_string(),
@@ -161,12 +161,12 @@ pub fn sign_request(name: &str, keys: &KeyPair, method: &str, path: &str, body: 
         body: sha256_b64(body),
     };
     let c = canonical(&serde_json::to_value(&claims).unwrap());
-    format!("Smoko {}.{}", b64(c.as_bytes()), keys.sign(format!("{AUTH_PREFIX}{c}").as_bytes()))
+    format!("Backchannel {}.{}", b64(c.as_bytes()), keys.sign(format!("{AUTH_PREFIX}{c}").as_bytes()))
 }
 
 /// Verifies signature, method, path, body hash and freshness. Key binding is the caller's job.
 pub fn verify_request(header: &str, method: &str, path: &str, body: &[u8], now_ms: i64) -> Option<AuthClaims> {
-    let rest = header.strip_prefix("Smoko ")?;
+    let rest = header.strip_prefix("Backchannel ")?;
     let (c64, sig) = rest.split_once('.')?;
     let c = String::from_utf8(unb64(c64)?).ok()?;
     let claims: AuthClaims = serde_json::from_str(&c).ok()?;

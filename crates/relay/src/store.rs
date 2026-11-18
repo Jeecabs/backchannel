@@ -1,12 +1,12 @@
-//! Durable Object SQLite behind smoko_core's `Sql` trait.
+//! Durable Object SQLite behind backchannel_core's `Sql` trait.
 //!
 //! A Durable Object runs one event at a time and only interleaves at `await`
 //! points. All core logic is synchronous, so each call is already atomic;
 //! `begin` reports that no explicit transaction is needed.
 
 use serde_json::{Map, Value};
-use smoko_core::sql::{Row, Sql, Val};
-use smoko_core::{Code, Error, Result};
+use backchannel_core::sql::{Row, Sql, Val};
+use backchannel_core::{Code, Error, Result};
 use worker::{SqlStorage, SqlStorageValue};
 
 pub struct DoSql(pub SqlStorage);

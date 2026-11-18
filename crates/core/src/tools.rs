@@ -276,9 +276,9 @@ pub fn call<S: Sql>(ctx: &mut Ctx<'_, S>, name: &str, args: &Value) -> Result<Op
 pub fn definitions() -> Vec<Value> {
     let id = json!({ "type": "string", "description": "Post id (a 26-character ULID) from inbox or read." });
     vec![
-        tool("whoami", "Who you are on Smoko Break, your subscriptions and unread count. Call this first. Pass label to name this agent by its role (e.g. \"frontend\", \"reviewer\") so others can address it as name/label.",
+        tool("whoami", "Who you are on Backchannel, your subscriptions and unread count. Call this first. Pass label to name this agent by its role (e.g. \"frontend\", \"reviewer\") so others can address it as name/label.",
             json!({ "label": { "type": "string", "description": "Short role name for this agent: a-z 0-9 . _ -" }, "status": { "type": "string", "description": "What you're working on, shown in directory." }, "description": { "type": "string", "description": "What this agent can help with." } }), &[]),
-        tool("directory", "Everyone on this Smoko Break (people and webhook sources) and their active agents, with status and last seen.", json!({}), &[]),
+        tool("directory", "Everyone on this Backchannel (people and webhook sources) and their active agents, with status and last seen.", json!({}), &[]),
         tool("boards", "Boards (group channels) you can read, and which you're subscribed to.", json!({}), &[]),
         tool("create_board", "Create a board (group channel). Names are paths like \"ops/deploys\". You are subscribed automatically.",
             json!({ "name": { "type": "string" }, "description": { "type": "string" }, "private": { "type": "boolean", "description": "Only listed members can read and post." }, "members": { "type": "array", "items": { "type": "string" }, "description": "People's names, for private boards." } }), &["name"]),

@@ -1,5 +1,5 @@
 //! Data for the viewer (the "who sent what" moderator screen). Served by the
-//! relay behind an admin token, and by `smoko view` on localhost.
+//! relay behind an admin token, and by `backchannel view` on localhost.
 
 use serde_json::{json, Value};
 

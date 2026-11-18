@@ -1,4 +1,4 @@
-//! Smoko Break relay on Cloudflare Workers.
+//! Backchannel relay on Cloudflare Workers.
 //!
 //! One Durable Object holds the authority (the ordered, signed log), the hosted
 //! agents' inboxes, memberships, invites, tokens and webhooks. It serves:
@@ -17,11 +17,11 @@ mod store;
 
 use worker::*;
 
-pub use relay::Smoko;
+pub use relay::Backchannel;
 
 #[event(fetch)]
 async fn fetch(req: Request, env: Env, _ctx: Context) -> Result<Response> {
     console_error_panic_hook::set_once();
-    let stub = env.durable_object("SMOKO")?.id_from_name("main")?.get_stub()?;
+    let stub = env.durable_object("BACKCHANNEL")?.id_from_name("main")?.get_stub()?;
     stub.fetch_with_request(req).await
 }

@@ -1,14 +1,14 @@
-//! `smoko mcp`: an MCP server over stdio. Works in local mode (tools run here)
+//! `backchannel mcp`: an MCP server over stdio. Works in local mode (tools run here)
 //! and remote mode (tools are forwarded to the relay). In local mode it also
-//! offers a `smoko://inbox` resource that pushes updates when mail arrives.
+//! offers a `backchannel://inbox` resource that pushes updates when mail arrives.
 
 use std::io::{BufRead, Write};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use serde_json::{json, Value};
-use smoko_core::crypto::random_bytes;
-use smoko_core::mcp::{self, Incoming, Server};
+use backchannel_core::crypto::random_bytes;
+use backchannel_core::mcp::{self, Incoming, Server};
 
 use crate::backend::{Backend, Local, NOT_SET_UP};
 use crate::config;
@@ -36,8 +36,8 @@ pub fn slug(s: &str) -> String {
 }
 
 pub fn default_label(client: &str) -> String {
-    if let Ok(l) = std::env::var("SMOKO_AGENT") {
-        if smoko_core::names::is_agent_label(&l) {
+    if let Ok(l) = std::env::var("BACKCHANNEL_AGENT") {
+        if backchannel_core::names::is_agent_label(&l) {
             return l;
         }
     }
@@ -46,12 +46,12 @@ pub fn default_label(client: &str) -> String {
 }
 
 fn setup_tool() -> Value {
-    smoko_core::tools::tool("setup", "Smoko Break isn't set up on this machine yet. Call this to get instructions for the user.", json!({}), &[])
+    backchannel_core::tools::tool("setup", "Backchannel isn't set up on this machine yet. Call this to get instructions for the user.", json!({}), &[])
 }
 
 pub fn run() {
     let out: Out = Arc::new(Mutex::new(std::io::stdout()));
-    let label = Arc::new(Mutex::new(std::env::var("SMOKO_AGENT").unwrap_or_default()));
+    let label = Arc::new(Mutex::new(std::env::var("BACKCHANNEL_AGENT").unwrap_or_default()));
     let subscribed = Arc::new(Mutex::new(false));
     let mut client = String::from("agent");
     let local_mode = matches!(config::load().map(|c| c.mode), Some(config::Mode::Local));
@@ -60,7 +60,7 @@ pub fn run() {
         spawn_watcher(out.clone(), label.clone(), subscribed.clone());
     }
 
-    let server = Server { name: "smoko", version: env!("CARGO_PKG_VERSION"), instructions: mcp::INSTRUCTIONS, resources: local_mode };
+    let server = Server { name: "backchannel", version: env!("CARGO_PKG_VERSION"), instructions: mcp::INSTRUCTIONS, resources: local_mode };
     let stdin = std::io::stdin();
     for line in stdin.lock().lines() {
         let Ok(line) = line else { break };
@@ -78,10 +78,10 @@ pub fn run() {
                 *l = default_label(&client);
             }
         }
-        // Re-open per message so `smoko init` takes effect without restarting the agent.
+        // Re-open per message so `backchannel init` takes effect without restarting the agent.
         let backend = Backend::open();
         let tools = match &backend {
-            Ok(b) => b.tools().unwrap_or_else(|_| smoko_core::tools::definitions()),
+            Ok(b) => b.tools().unwrap_or_else(|_| backchannel_core::tools::definitions()),
             Err(_) => vec![setup_tool()],
         };
         match server.handle(&msg, &tools) {
@@ -110,9 +110,9 @@ pub fn run() {
     }
 }
 
-fn resource(method: &str, params: &Value, label: &Arc<Mutex<String>>, subscribed: &Arc<Mutex<bool>>, client: &str, id: Value) -> smoko_core::Result<Value> {
-    const URI: &str = "smoko://inbox";
-    let res = json!({ "uri": URI, "name": "inbox", "title": "Smoko inbox", "description": "Unread Smoko messages for this agent (peek; does not mark them read).", "mimeType": "text/plain" });
+fn resource(method: &str, params: &Value, label: &Arc<Mutex<String>>, subscribed: &Arc<Mutex<bool>>, client: &str, id: Value) -> backchannel_core::Result<Value> {
+    const URI: &str = "backchannel://inbox";
+    let res = json!({ "uri": URI, "name": "inbox", "title": "Backchannel inbox", "description": "Unread Backchannel messages for this agent (peek; does not mark them read).", "mimeType": "text/plain" });
     Ok(match method {
         "resources/list" => mcp::result(id, json!({ "resources": [res] })),
         "resources/templates/list" => mcp::result(id, json!({ "resourceTemplates": [] })),
@@ -154,7 +154,7 @@ fn spawn_watcher(out: Out, label: Arc<Mutex<String>>, subscribed: Arc<Mutex<bool
             let addr = format!("{}/{}", c.name, label.lock().unwrap());
             let unread = inbox.unread(&addr).unwrap_or(0);
             if unread > 0 && unread != last {
-                send(&out, &mcp::notification("notifications/resources/updated", json!({ "uri": "smoko://inbox" })));
+                send(&out, &mcp::notification("notifications/resources/updated", json!({ "uri": "backchannel://inbox" })));
             }
             last = unread;
         }

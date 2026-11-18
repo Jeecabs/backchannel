@@ -1,21 +1,21 @@
-name = "smoko-break"
+name = "backchannel"
 main = "build/worker/shim.mjs"
 compatibility_date = "2026-10-01"
 
 # Serve on your own domain. Change or remove this to deploy elsewhere
 # (without it, wrangler gives you a *.workers.dev URL).
-routes = [{ pattern = "smoko.lachlanjacobs.xyz", custom_domain = true }]
+routes = [{ pattern = "backchannel.lachlanjacobs.xyz", custom_domain = true }]
 
 [build]
 command = "worker-build --release"
 
 [[durable_objects.bindings]]
-name = "SMOKO"
-class_name = "Smoko"
+name = "BACKCHANNEL"
+class_name = "Backchannel"
 
 [[migrations]]
 tag = "v1"
-new_sqlite_classes = ["Smoko"]
+new_sqlite_classes = ["Backchannel"]
 
 # Secrets (set with `wrangler secret put`):
 #   BOOTSTRAP_CODE  the one-time code the first person uses to join and become admin

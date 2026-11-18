@@ -1,19 +1,19 @@
 use std::time::Duration;
 
 use serde_json::{json, Value};
-use smoko_core::authority::{Authority, Mode, Profile};
-use smoko_core::crypto::{b64, iso, random_bytes, sha256_b64, sign_envelope, ulid, KeyPair};
-use smoko_core::inbox::Inbox;
-use smoko_core::mcp::{self, Incoming, Server};
-use smoko_core::names::{is_agent_label, is_board_name, is_name};
-use smoko_core::sql::{int, opt_text, text, Sql};
-use smoko_core::tools::{self, opt_int, opt_str, req_str, Ctx, Me, Outcome};
-use smoko_core::{limits, p, render, view, Author, Code, Envelope, Error, Kind, PROTOCOL, DEFAULT_BOARD};
+use backchannel_core::authority::{Authority, Mode, Profile};
+use backchannel_core::crypto::{b64, iso, random_bytes, sha256_b64, sign_envelope, ulid, KeyPair};
+use backchannel_core::inbox::Inbox;
+use backchannel_core::mcp::{self, Incoming, Server};
+use backchannel_core::names::{is_agent_label, is_board_name, is_name};
+use backchannel_core::sql::{int, opt_text, text, Sql};
+use backchannel_core::tools::{self, opt_int, opt_str, req_str, Ctx, Me, Outcome};
+use backchannel_core::{limits, p, render, view, Author, Code, Envelope, Error, Kind, PROTOCOL, DEFAULT_BOARD};
 use worker::*;
 
 use crate::store::DoSql;
 
-type R<T> = smoko_core::Result<T>;
+type R<T> = backchannel_core::Result<T>;
 
 const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS members (
@@ -82,10 +82,10 @@ fn secret(prefix: &str) -> String {
     format!("{prefix}{}", b64(&random_bytes::<24>()))
 }
 
-/// Short, readable invite codes like "SMOKO-7KQ2-M9XD".
+/// Short, readable invite codes like "CHAN-7KQ2-M9XD".
 fn invite_code() -> String {
     let id = ulid(0);
-    format!("SMOKO-{}-{}", &id[18..22], &id[22..26])
+    format!("CHAN-{}-{}", &id[18..22], &id[22..26])
 }
 
 fn hash(s: &str) -> String {
@@ -99,18 +99,18 @@ struct Member {
 }
 
 #[durable_object]
-pub struct Smoko {
+pub struct Backchannel {
     state: State,
     env: Env,
 }
 
-impl DurableObject for Smoko {
+impl DurableObject for Backchannel {
     fn new(state: State, env: Env) -> Self {
-        let s = Smoko { state, env };
+        let s = Backchannel { state, env };
         let auth = Authority::new(s.sql(), Mode::Authority, now).expect("schema");
         Inbox::new(&auth, true, vec![]).expect("schema");
         auth.sql.batch(SCHEMA).expect("schema");
-        auth.ensure_board(DEFAULT_BOARD, "The smoko room: where everyone has a yarn. Every new agent follows it.").expect("smoko");
+        auth.ensure_board(DEFAULT_BOARD, "The smoko room: where everyone has a yarn. Every new agent follows it.").expect("backchannel");
         s
     }
 
@@ -146,7 +146,7 @@ fn origin(req: &Request) -> String {
     req.url().map(|u| u.origin().ascii_serialization()).unwrap_or_default()
 }
 
-impl Smoko {
+impl Backchannel {
     fn sql(&self) -> DoSql {
         DoSql(self.state.storage().sql())
     }
@@ -169,7 +169,7 @@ impl Smoko {
             (Method::Get, []) => html(HOME_HTML),
             (Method::Get, ["join"]) => html(JOIN_HTML),
             (Method::Get, ["view"]) => html(VIEW_HTML),
-            (Method::Get, [".well-known", "smoko"]) => json_resp(
+            (Method::Get, [".well-known", "backchannel"]) => json_resp(
                 &json!({ "protocol": PROTOCOL, "mcp": format!("{base}/mcp"), "join": format!("{base}/join"), "signup": "invite or request" }),
                 200,
             ),
@@ -211,8 +211,8 @@ impl Smoko {
                 let Some(m) = self.member_for(bearer(&req).as_deref()).ok().flatten() else {
                     return json_error(&Error::new(Code::Unauthorized, "missing or unknown token"));
                 };
-                let label = req.headers().get("x-smoko-agent")?.filter(|l| is_agent_label(l)).unwrap_or_else(|| "human".into());
-                let client = req.headers().get("x-smoko-client")?.unwrap_or_else(|| "http".into());
+                let label = req.headers().get("x-backchannel-agent")?.filter(|l| is_agent_label(l)).unwrap_or_else(|| "human".into());
+                let client = req.headers().get("x-backchannel-client")?.unwrap_or_else(|| "http".into());
                 let auth = self.auth();
                 let inbox = Inbox::attach(&auth, true, vec![DEFAULT_BOARD.into()]);
                 let me = match self.me(&m.name) {
@@ -230,8 +230,8 @@ impl Smoko {
                 let Some(m) = self.member_for(bearer(&req).as_deref()).ok().flatten() else {
                     return json_error(&Error::new(Code::Unauthorized, "missing or unknown token"));
                 };
-                let label = req.headers().get("x-smoko-agent")?.filter(|l| is_agent_label(l)).unwrap_or_else(|| "cli".into());
-                let client = req.headers().get("x-smoko-client")?.unwrap_or_else(|| "http".into());
+                let label = req.headers().get("x-backchannel-agent")?.filter(|l| is_agent_label(l)).unwrap_or_else(|| "cli".into());
+                let client = req.headers().get("x-backchannel-client")?.unwrap_or_else(|| "http".into());
                 let args: Value = req.json().await.unwrap_or(json!({}));
                 let mut label = label;
                 match self.run_tool(&m, &mut label, &client, &tool, &args, &base).await {
@@ -259,7 +259,7 @@ impl Smoko {
                         let r = if what == "state" {
                             let mut extra = self.admin_extra(&base).unwrap_or(json!({}));
                             extra["me"] = json!(m.name);
-                            view::state(&auth, &inbox, "Smoko Break", extra)
+                            view::state(&auth, &inbox, "Backchannel", extra)
                         } else {
                             view::feed(&auth, after, 500)
                         };
@@ -268,8 +268,8 @@ impl Smoko {
                             Err(e) => json_error(&e),
                         }
                     }
-                    Ok(Some(_)) => json_error(&Error::new(Code::Forbidden, "The viewer is for admins. Ask your agent what's new on Smoko instead.")),
-                    _ => json_error(&Error::new(Code::Unauthorized, "That token didn't work. Paste the token you got when you joined (it starts with smk_).")),
+                    Ok(Some(_)) => json_error(&Error::new(Code::Forbidden, "The viewer is for admins. Ask your agent what's new on Backchannel instead.")),
+                    _ => json_error(&Error::new(Code::Unauthorized, "That token didn't work. Paste the token you got when you joined (it starts with bch_).")),
                 }
             }
             _ => json_error(&Error::new(Code::NotFound, format!("nothing at {path}"))),
@@ -309,7 +309,7 @@ impl Smoko {
         let sql = self.sql();
         sql.run("INSERT OR REPLACE INTO custody (name, seed) VALUES (?, ?)", p![name, keys.secret_key])?;
         sql.run("INSERT OR REPLACE INTO members (name, role, invited_by, joined_at, active) VALUES (?, ?, ?, ?, 1)", p![name, role, invited_by, now()])?;
-        let token = secret("smk_");
+        let token = secret("bch_");
         sql.run("INSERT INTO tokens (hash, name, created_at) VALUES (?, ?, ?)", p![hash(&token), name, now()])?;
         Ok(token)
     }
@@ -439,7 +439,7 @@ impl Smoko {
         });
         let who = member.clone().or(session_member);
         let tools = tool_list(who.as_ref());
-        let server = Server { name: "smoko", version: env!("CARGO_PKG_VERSION"), instructions: mcp::INSTRUCTIONS, resources: false };
+        let server = Server { name: "backchannel", version: env!("CARGO_PKG_VERSION"), instructions: mcp::INSTRUCTIONS, resources: false };
 
         match server.handle(msg, &tools) {
             Incoming::Ignore => None,
@@ -465,7 +465,7 @@ impl Smoko {
                     .unwrap_or_else(|| ("agent".into(), "mcp".into()));
                 let result = match (&who, name.as_str()) {
                     (None, "join") => self.join_tool(&args, session_id.as_deref(), base),
-                    (None, _) => Err(Error::new(Code::Unauthorized, "You're not signed in to Smoko Break yet. Ask your user for their invite code and the name they want, then call join.")),
+                    (None, _) => Err(Error::new(Code::Unauthorized, "You're not signed in to Backchannel yet. Ask your user for their invite code and the name they want, then call join.")),
                     (Some(m), _) => self.run_tool(m, &mut label, &client, &name, &args, base).await,
                 };
                 if let Some(sid) = session_id.as_deref() {
@@ -493,7 +493,7 @@ impl Smoko {
             self.sql().run("UPDATE sessions SET name = ? WHERE id = ?", p![name, sid])?;
         }
         Ok(format!(
-            "Welcome to Smoko Break, {name}. This session is signed in now.\n\nTell your user to save this token like a password and reconnect with it so future sessions are signed in too:\n\n{}\n\nCall whoami next.",
+            "Welcome to Backchannel, {name}. This session is signed in now.\n\nTell your user to save this token like a password and reconnect with it so future sessions are signed in too:\n\n{}\n\nCall whoami next.",
             install_text(base, token)
         ))
     }
@@ -703,7 +703,7 @@ impl Smoko {
         let kind = q.get("kind").cloned().or_else(|| pick(&["kind"])).and_then(|k| Kind::parse(&k)).filter(|k| matches!(k, Kind::Note | Kind::Ask | Kind::Task)).unwrap_or_else(|| Kind::parse(&text(&h, "kind")).unwrap_or(Kind::Note));
         let mentions: Vec<String> = payload.get("mentions").and_then(Value::as_array).map(|a| a.iter().filter_map(|m| m.as_str().map(|s| s.trim_start_matches('@').to_string())).take(limits::MENTIONS).collect()).unwrap_or_default();
         let data = payload.as_object().cloned().map(|d| {
-            if smoko_core::crypto::canonical(&Value::Object(d.clone())).len() > limits::DATA {
+            if backchannel_core::crypto::canonical(&Value::Object(d.clone())).len() > limits::DATA {
                 let mut m = serde_json::Map::new();
                 m.insert("truncated".into(), json!(true));
                 m.insert("keys".into(), json!(d.keys().take(50).collect::<Vec<_>>()));
@@ -734,7 +734,7 @@ impl Smoko {
             sig: String::new(),
         };
         let auth = self.auth();
-        let mut combined = smoko_core::names::extract_mentions(&body);
+        let mut combined = backchannel_core::names::extract_mentions(&body);
         if let Some(m) = &env.mentions {
             combined.extend(m.iter().cloned());
         }
@@ -771,11 +771,11 @@ fn slug(s: &str) -> String {
 
 fn install_text(base: &str, token: &str) -> String {
     format!(
-        "Claude Code:\n  claude mcp add --scope user --transport http smoko {base}/mcp --header \"Authorization: Bearer {token}\"\n\n\
-         Codex:\n  export SMOKO_TOKEN={token}   # add to your shell profile\n  codex mcp add smoko --url {base}/mcp --bearer-token-env-var SMOKO_TOKEN\n\n\
-         pi (0.99 or later): add this to ~/.pi/agent/mcp.json, then restart pi:\n  {{ \"mcpServers\": {{ \"smoko\": {{ \"url\": \"{base}/mcp/{token}\" }} }} }}\n\n\
+        "Claude Code:\n  claude mcp add --scope user --transport http backchannel {base}/mcp --header \"Authorization: Bearer {token}\"\n\n\
+         Codex:\n  export BACKCHANNEL_TOKEN={token}   # add to your shell profile\n  codex mcp add backchannel --url {base}/mcp --bearer-token-env-var BACKCHANNEL_TOKEN\n\n\
+         pi (0.99 or later): add this to ~/.pi/agent/mcp.json, then restart pi:\n  {{ \"mcpServers\": {{ \"backchannel\": {{ \"url\": \"{base}/mcp/{token}\" }} }} }}\n\n\
          Any other MCP client that takes a Streamable HTTP URL:\n  {base}/mcp/{token}\n\n\
-         Terminal:\n  smoko login --relay {base} --token {token}"
+         Terminal:\n  backchannel login --relay {base} --token {token}"
     )
 }
 
@@ -794,10 +794,10 @@ fn tool_list(m: Option<&Member>) -> Vec<Value> {
     let Some(m) = m else {
         return vec![tools::tool(
             "join",
-            "Sign your user up to Smoko Break. Only call this with the name and invite code your user gave you: joining is their decision. Without an invite the request goes to the admins for approval.",
+            "Sign your user up to Backchannel. Only call this with the name and invite code your user gave you: joining is their decision. Without an invite the request goes to the admins for approval.",
             json!({
                 "name": { "type": "string", "description": "The name your user chose: 2-32 characters of a-z, 0-9 and -." },
-                "invite": { "type": "string", "description": "Invite code from an admin, like SMOKO-XXXX-XXXX." },
+                "invite": { "type": "string", "description": "Invite code from an admin, like CHAN-XXXX-XXXX." },
                 "display_name": { "type": "string" },
                 "bio": { "type": "string" },
                 "note": { "type": "string", "description": "For a request without an invite: who you are, for the admins." }

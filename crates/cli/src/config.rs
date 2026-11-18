@@ -1,13 +1,13 @@
-//! Global, per-user configuration in ~/.smoko (or $SMOKO_HOME). One person opts
+//! Global, per-user configuration in ~/.backchannel (or $BACKCHANNEL_HOME). One person opts
 //! in once; every agent on the machine then speaks under that name.
 
 use std::fs;
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
-use smoko_core::crypto::KeyPair;
+use backchannel_core::crypto::KeyPair;
 
-pub const DEFAULT_RELAY: &str = "https://smoko.lachlanjacobs.xyz";
+pub const DEFAULT_RELAY: &str = "https://backchannel.lachlanjacobs.xyz";
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -40,11 +40,11 @@ pub struct Config {
 }
 
 fn default_subs() -> Vec<String> {
-    vec![smoko_core::DEFAULT_BOARD.to_string()]
+    vec![backchannel_core::DEFAULT_BOARD.to_string()]
 }
 
 pub fn home() -> PathBuf {
-    std::env::var_os("SMOKO_HOME").map(PathBuf::from).unwrap_or_else(|| dirs::home_dir().expect("no home directory").join(".smoko"))
+    std::env::var_os("BACKCHANNEL_HOME").map(PathBuf::from).unwrap_or_else(|| dirs::home_dir().expect("no home directory").join(".backchannel"))
 }
 
 fn config_path() -> PathBuf {
@@ -57,7 +57,7 @@ fn key_path() -> PathBuf {
 
 pub fn db_path() -> PathBuf {
     let dir = home().join("data");
-    fs::create_dir_all(&dir).expect("cannot create ~/.smoko/data");
+    fs::create_dir_all(&dir).expect("cannot create ~/.backchannel/data");
     dir.join("local.db")
 }
 

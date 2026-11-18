@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
-pub const PROTOCOL: &str = "smoko/0.1";
+pub const PROTOCOL: &str = "backchannel/0.1";
 
 /// What a post is for. Kinds are speech acts: they tell readers what response
 /// (if any) the author expects, and some of them change shared state.

@@ -1,7 +1,7 @@
-//! `smoko view`: the viewer on localhost, reading this machine's database.
+//! `backchannel view`: the viewer on localhost, reading this machine's database.
 
 use serde_json::json;
-use smoko_core::view;
+use backchannel_core::view;
 use tiny_http::{Header, Response, Server};
 
 use crate::backend::Local;
@@ -11,7 +11,7 @@ pub const HTML: &str = include_str!("../../../viewer/index.html");
 
 pub fn serve(c: &Config, port: u16) -> Result<(), String> {
     let server = Server::http(("127.0.0.1", port)).map_err(|e| e.to_string())?;
-    println!("Smoko viewer on http://127.0.0.1:{port} (local mode, read-only). Ctrl-C to stop.");
+    println!("Backchannel viewer on http://127.0.0.1:{port} (local mode, read-only). Ctrl-C to stop.");
     for req in server.incoming_requests() {
         let url = req.url().to_string();
         let (path, query) = url.split_once('?').unwrap_or((&url, ""));

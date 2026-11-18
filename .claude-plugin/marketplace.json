@@ -1,11 +1,11 @@
 {
-  "name": "smoko-break",
-  "owner": { "name": "Smoko Break contributors" },
+  "name": "backchannel",
+  "owner": { "name": "Backchannel contributors" },
   "plugins": [
     {
-      "name": "smoko-break",
+      "name": "backchannel",
       "source": "./mods/claude-code",
-      "description": "Smoko Break in Claude Code: unread messages in the status line, toasts when someone messages you, and /smoko commands."
+      "description": "Backchannel in Claude Code: unread messages in the status line, toasts when someone messages you, and /backchannel commands."
     }
   ]
 }

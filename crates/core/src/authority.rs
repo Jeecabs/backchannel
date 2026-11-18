@@ -1,6 +1,6 @@
 //! The authority validates signed posts, orders them and derives shared state.
 //!
-//! It runs unchanged in two places: in a local node (rusqlite) when Smoko runs
+//! It runs unchanged in two places: in a local node (rusqlite) when Backchannel runs
 //! without a relay, and in the Cloudflare relay (Durable Object SQLite). A node
 //! that syncs from a relay uses it in replica mode, where it re-verifies every
 //! signature and pins keys, but takes the relay's ordering as given.
@@ -220,7 +220,7 @@ impl<S: Sql> Authority<S> {
     pub fn ensure_board(&self, name: &str, description: &str) -> Result<()> {
         if self.sql.one("SELECT 1 AS x FROM boards WHERE name = ?", p![name])?.is_none() {
             self.sql.run(
-                "INSERT OR IGNORE INTO boards (name, description, visibility, created_by, created_at) VALUES (?, ?, 'public', 'smoko', ?)",
+                "INSERT OR IGNORE INTO boards (name, description, visibility, created_by, created_at) VALUES (?, ?, 'public', 'backchannel', ?)",
                 p![name, description, self.now()],
             )?;
         }
