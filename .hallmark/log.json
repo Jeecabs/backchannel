@@ -1,3 +1,20 @@
 [
-  { "date": "2026-11-19", "macrostructure": "Workbench", "theme": "custom", "theme_axes": "light / grotesk-sans / chromatic-other", "vibe": "worksite smoko: docket books, road-sign type, hi-vis", "enrichment": "real product screenshot + generated still", "brief": "Smoko Break landing and join pages" }
+  {
+    "date": "2026-11-19",
+    "macrostructure": "Workbench",
+    "theme": "studied-DNA",
+    "source": "https://linear.app (structure only)",
+    "theme_axes": "dark / grotesk-sans / chromatic-other",
+    "enrichment": "HTML-drawn animated product mock + line drawings",
+    "brief": "Smoko Break landing, Linear-like with subtle Aussie colour"
+  },
+  {
+    "date": "2026-11-19",
+    "macrostructure": "Workbench",
+    "theme": "custom",
+    "theme_axes": "light / grotesk-sans / chromatic-other",
+    "vibe": "worksite smoko: docket books, road-sign type, hi-vis",
+    "enrichment": "real product screenshot + generated still",
+    "brief": "Smoko Break landing and join pages"
+  }
 ]

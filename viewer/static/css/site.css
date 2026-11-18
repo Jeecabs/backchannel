@@ -1,83 +1,47 @@
-/* Hallmark · macrostructure: Workbench · tone: utilitarian, worksite warm · anchor hue: eucalyptus 158
- * theme: custom (vibe: "worksite smoko: docket books, road-sign type, hi-vis, gum trees")
- * paper oklch(95.5% 0.022 88) · accent oklch(44% 0.085 158) eucalyptus · Overpass + Public Sans + Overpass Mono
- * axes: light / grotesk-sans / chromatic-other (green)
- * nav: N9 edge-aligned minimal · footer: Ft2 inline single line · enrichment: real product screenshot + generated still
- * Hallmark · pre-emit critique: P4 H5 E4 S5 R4 V4
+/* Hallmark · macrostructure: Workbench · genre: modern-minimal · theme: studied-DNA (source: https://linear.app, structure only)
+ * paper oklch(13.5% 0.006 160) · accent: cream pill, status colours gum oklch(74% 0.09 160) / wattle oklch(84% 0.14 88) / ochre oklch(68% 0.12 45)
+ * Inter (opsz) + Geist Mono · nav: N1b slim bar with hairline · footer: Ft2 inline single line
+ * Hallmark · pre-emit critique: P4 H5 E4 S4 R5 V4
  */
 :root {
-  --color-paper: oklch(95.5% 0.022 88);
-  --color-paper-2: oklch(92.5% 0.03 88);
-  --color-sheet: oklch(98% 0.012 90);
-  --color-ink: oklch(23% 0.025 155);
-  --color-ink-2: oklch(43% 0.02 150);
-  --color-ink-3: oklch(56% 0.018 140);
-  --color-rule: oklch(84% 0.03 85);
-  --color-rule-strong: oklch(70% 0.03 120);
-  --color-accent: oklch(44% 0.085 158);
-  --color-accent-hover: oklch(39% 0.085 158);
-  --color-accent-ink: oklch(97% 0.012 90);
-  --color-hivis: oklch(87% 0.17 95);
-  --color-clay: oklch(55% 0.14 38);
-  --color-focus: oklch(48% 0.14 250);
-  --color-code-bg: oklch(20% 0.02 155);
-  --color-code-ink: oklch(92% 0.02 95);
-  --color-code-dim: oklch(68% 0.03 130);
-  --color-code-gold: oklch(84% 0.14 90);
+  --color-paper: oklch(13.5% 0.006 160);
+  --color-paper-2: oklch(16.5% 0.007 160);
+  --color-sheet: oklch(15.5% 0.007 160);
+  --color-raised: oklch(19% 0.008 160);
+  --color-ink: oklch(96.5% 0.006 95);
+  --color-ink-2: oklch(72% 0.012 110);
+  --color-ink-3: oklch(55% 0.012 130);
+  --color-rule: oklch(100% 0 0 / 0.08);
+  --color-rule-strong: oklch(100% 0 0 / 0.14);
+  --color-accent: oklch(95% 0.014 90);
+  --color-accent-hover: oklch(100% 0 0);
+  --color-accent-ink: oklch(16% 0.01 160);
+  --color-gum: oklch(74% 0.09 160);
+  --color-wattle: oklch(84% 0.14 88);
+  --color-ochre: oklch(68% 0.12 45);
+  --color-hivis: var(--color-wattle);
+  --color-clay: var(--color-ochre);
+  --color-focus: oklch(78% 0.1 160);
+  --color-code-bg: oklch(11% 0.005 160);
+  --color-code-ink: oklch(92% 0.01 95);
+  --color-code-dim: oklch(60% 0.015 130);
+  --color-code-gold: var(--color-wattle);
 
-  --font-display: "Overpass", ui-sans-serif, system-ui, sans-serif;
-  --font-body: "Public Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
-  --font-mono: "Overpass Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  --font-display: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-body: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace;
 
   --space-3xs: 0.25rem; --space-2xs: 0.5rem; --space-xs: 0.75rem; --space-sm: 1rem;
-  --space-md: 1.5rem; --space-lg: 2rem; --space-xl: 3rem; --space-2xl: 4.5rem; --space-3xl: 7rem;
+  --space-md: 1.5rem; --space-lg: 2rem; --space-xl: 3rem; --space-2xl: 4.5rem; --space-3xl: 7.5rem;
 
-  --text-xs: 0.8125rem; --text-sm: 0.9375rem; --text-md: 1.0625rem; --text-lg: 1.25rem;
-  --text-xl: 1.625rem; --text-2xl: clamp(1.875rem, 1.2rem + 2.4vw, 2.75rem);
-  --text-display: clamp(2.6rem, 1.2rem + 5.4vw, 5.25rem);
+  --text-xs: 0.8125rem; --text-sm: 0.9375rem; --text-md: 1rem; --text-lg: 1.1875rem;
+  --text-xl: 1.5rem; --text-2xl: clamp(1.75rem, 1.2rem + 1.9vw, 2.5rem);
+  --text-display: clamp(2.5rem, 1.1rem + 5vw, 4.5rem);
 
-  --radius-sm: 4px; --radius-md: 8px;
+  --radius-sm: 6px; --radius-md: 12px; --radius-lg: 16px;
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
   --dur-short: 160ms;
   --measure: 62ch;
-  color-scheme: light;
-}
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    --color-paper: oklch(19% 0.018 155);
-    --color-paper-2: oklch(23% 0.02 155);
-    --color-sheet: oklch(22% 0.02 155);
-    --color-ink: oklch(94% 0.02 90);
-    --color-ink-2: oklch(78% 0.02 100);
-    --color-ink-3: oklch(64% 0.02 120);
-    --color-rule: oklch(32% 0.02 150);
-    --color-rule-strong: oklch(45% 0.03 140);
-    --color-accent: oklch(72% 0.11 158);
-    --color-accent-hover: oklch(78% 0.11 158);
-    --color-accent-ink: oklch(18% 0.02 155);
-    --color-hivis: oklch(80% 0.16 95);
-    --color-clay: oklch(72% 0.13 40);
-    --color-focus: oklch(75% 0.12 250);
-    --color-code-bg: oklch(14% 0.015 155);
-    color-scheme: dark;
-  }
-}
-:root[data-theme="dark"] {
-  --color-paper: oklch(19% 0.018 155);
-  --color-paper-2: oklch(23% 0.02 155);
-  --color-sheet: oklch(22% 0.02 155);
-  --color-ink: oklch(94% 0.02 90);
-  --color-ink-2: oklch(78% 0.02 100);
-  --color-ink-3: oklch(64% 0.02 120);
-  --color-rule: oklch(32% 0.02 150);
-  --color-rule-strong: oklch(45% 0.03 140);
-  --color-accent: oklch(72% 0.11 158);
-  --color-accent-hover: oklch(78% 0.11 158);
-  --color-accent-ink: oklch(18% 0.02 155);
-  --color-hivis: oklch(80% 0.16 95);
-  --color-clay: oklch(72% 0.13 40);
-  --color-focus: oklch(75% 0.12 250);
-  --color-code-bg: oklch(14% 0.015 155);
   color-scheme: dark;
 }
 
@@ -88,66 +52,67 @@ body {
   background: var(--color-paper);
   color: var(--color-ink);
   font: 400 var(--text-md)/1.6 var(--font-body);
+  font-optical-sizing: auto;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }
 img { max-width: 100%; display: block; height: auto; }
 p { margin: 0; }
-h1, h2, h3 { font-family: var(--font-display); font-weight: 800; font-style: normal; line-height: 1.02; letter-spacing: -0.025em; margin: 0; overflow-wrap: anywhere; min-width: 0; }
-a { color: var(--color-accent); text-underline-offset: 0.18em; text-decoration-thickness: 1px; }
-a:hover { text-decoration-thickness: 2px; }
+h1, h2, h3 { font-family: var(--font-display); font-weight: 560; font-style: normal; line-height: 1.06; letter-spacing: -0.025em; margin: 0; overflow-wrap: anywhere; min-width: 0; text-wrap: balance; }
+a { color: var(--color-ink); text-underline-offset: 0.2em; text-decoration-thickness: 1px; text-decoration-color: var(--color-rule-strong); }
+a:hover { text-decoration-color: currentColor; }
 code, kbd, .mono { font-family: var(--font-mono); font-size: 0.88em; }
-:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 3px; border-radius: 2px; }
-::selection { background: var(--color-hivis); color: oklch(20% 0.02 155); }
+:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 3px; border-radius: 4px; }
+::selection { background: oklch(84% 0.14 88 / 0.35); }
 
-.wrap { width: 100%; max-width: 74rem; margin-inline: auto; padding-inline: var(--space-md); }
+.wrap { --pad: var(--space-md); width: 100%; max-width: 72rem; margin-inline: auto; padding-inline: var(--pad); }
 
-/* Nav: wordmark left, two things right. Nothing else. */
-.top { display: flex; align-items: center; justify-content: space-between; gap: var(--space-sm); padding-block: var(--space-md); }
-.wordmark { display: inline-flex; align-items: center; gap: var(--space-2xs); color: var(--color-ink); text-decoration: none; font: 800 var(--text-lg)/1 var(--font-display); letter-spacing: -0.02em; white-space: nowrap; }
-.wordmark svg { width: 1.6rem; height: 1.6rem; flex: none; }
+/* Nav: slim bar, hairline under it. */
+.bar { position: sticky; top: 0; z-index: 10; background: oklch(13.5% 0.006 160 / 0.82); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); border-bottom: 1px solid var(--color-rule); }
+.top { display: flex; align-items: center; justify-content: space-between; gap: var(--space-sm); height: 3.75rem; }
+.wordmark { display: inline-flex; align-items: center; gap: 0.6rem; color: var(--color-ink); text-decoration: none; font: 600 1.0625rem/1 var(--font-display); letter-spacing: -0.015em; white-space: nowrap; }
+.wordmark svg { width: 1.375rem; height: 1.375rem; flex: none; }
 .top-links { display: flex; align-items: center; gap: var(--space-md); font-size: var(--text-sm); white-space: nowrap; }
-.top-links a:not(.btn) { color: var(--color-ink-2); text-decoration: none; }
-.top-links a:not(.btn):hover { color: var(--color-ink); text-decoration: underline; }
+.top-links a:not(.btn) { color: var(--color-ink-2); text-decoration: none; transition: color var(--dur-short) var(--ease-out); }
+.top-links a:not(.btn):hover { color: var(--color-ink); }
+.top-links .sep { width: 1px; height: 1.1rem; background: var(--color-rule-strong); }
 
-/* Buttons: a squared-off sign plate, not a pill. */
+/* Buttons: a quiet cream pill, like a cuppa on a dark bench. */
 .btn {
   display: inline-flex; align-items: center; justify-content: center; gap: var(--space-2xs);
-  min-height: 3rem; padding: 0 var(--space-md);
-  border: 2px solid var(--color-accent); border-radius: var(--radius-sm);
+  min-height: 2.75rem; padding: 0 1.25rem;
+  border: 1px solid var(--color-accent); border-radius: 999px;
   background: var(--color-accent); color: var(--color-accent-ink);
-  font: 700 var(--text-md)/1 var(--font-display); letter-spacing: -0.005em;
+  font: 550 var(--text-md)/1 var(--font-body); letter-spacing: -0.01em;
   text-decoration: none; white-space: nowrap; cursor: pointer;
   transition: background-color var(--dur-short) var(--ease-out), transform 100ms var(--ease-out);
 }
-.btn:hover { background: var(--color-accent-hover); border-color: var(--color-accent-hover); text-decoration: none; }
-.btn:active { transform: translateY(1px); }
+.btn:hover { background: var(--color-accent-hover); }
+.btn:active { transform: scale(0.98); }
 .btn:disabled { opacity: 0.5; cursor: progress; }
 .btn.plain { background: transparent; color: var(--color-ink); border-color: var(--color-rule-strong); }
-.btn.plain:hover { background: var(--color-paper-2); }
-.btn.small { min-height: 2.25rem; padding: 0 var(--space-sm); font-size: var(--text-sm); }
-
-/* Hi-vis marker under a phrase: carries emphasis without italics. */
-.marked { background: linear-gradient(transparent 62%, var(--color-hivis) 62%, var(--color-hivis) 92%, transparent 92%); padding-inline: 0.04em; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
+.btn.plain:hover { background: var(--color-raised); }
+.btn.small { min-height: 2.125rem; padding: 0 0.95rem; font-size: var(--text-sm); }
 
 /* Terminal-ish output: real text, no fake window chrome. */
 pre.out {
-  margin: 0; padding: var(--space-md); overflow-x: auto;
+  margin: 0; padding: var(--space-sm) var(--space-md); overflow-x: auto;
   background: var(--color-code-bg); color: var(--color-code-ink);
-  border-radius: var(--radius-md);
-  font: 400 0.8125rem/1.65 var(--font-mono); white-space: pre;
+  border: 1px solid var(--color-rule); border-radius: var(--radius-md);
+  font: 400 0.8125rem/1.7 var(--font-mono); white-space: pre;
 }
 pre.out .dim { color: var(--color-code-dim); }
 pre.out .gold { color: var(--color-code-gold); }
 
-.foot { border-top: 1px solid var(--color-rule); padding-block: var(--space-md) var(--space-xl); font-size: var(--text-sm); color: var(--color-ink-3); }
+.foot { border-top: 1px solid var(--color-rule); padding-block: var(--space-lg) var(--space-xl); font-size: var(--text-sm); color: var(--color-ink-3); }
 .foot .wrap { display: flex; flex-wrap: wrap; gap: var(--space-2xs) var(--space-md); justify-content: space-between; }
-.foot a { color: var(--color-ink-2); white-space: nowrap; }
+.foot a { color: var(--color-ink-2); text-decoration: none; white-space: nowrap; }
+.foot a:hover { color: var(--color-ink); }
 
 [hidden] { display: none !important; }
 
 @media (max-width: 30rem) {
-  .wrap { padding-inline: var(--space-sm); }
+  .wrap { --pad: var(--space-sm); }
   .top-links { gap: var(--space-sm); }
   .top-links .hide-sm { display: none; }
 }
