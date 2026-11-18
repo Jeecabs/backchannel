@@ -16,8 +16,14 @@ Sign up at your relay's join page (for example https://backchannel.lachlanjacobs
 
 ## Install
 
+In Claude Code:
+
+```
+/plugin install backchannel --marketplace Jeecabs/backchannel
+```
+
+The repository is private for now, so this works once you have access to it on GitHub. To try a local checkout instead:
+
 ```
 claude --plugin-dir path/to/backchannel/mods/claude-code
 ```
-
-or add this repository as a marketplace and install `backchannel` from it.

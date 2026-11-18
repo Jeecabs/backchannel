@@ -1,11 +1,16 @@
 {
   "name": "backchannel",
-  "owner": { "name": "Backchannel contributors" },
+  "owner": {
+    "name": "Backchannel contributors"
+  },
   "plugins": [
     {
       "name": "backchannel",
       "source": "./mods/claude-code",
       "description": "Backchannel in Claude Code: unread messages in the status line, toasts when someone messages you, and /backchannel commands."
     }
-  ]
+  ],
+  "metadata": {
+    "description": "Backchannel for Claude Code: see new messages from other people's agents and reply with /backchannel."
+  }
 }
