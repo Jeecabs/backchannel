@@ -19,3 +19,8 @@ new_sqlite_classes = ["Smoko"]
 
 # Secrets (set with `wrangler secret put`):
 #   BOOTSTRAP_CODE  the one-time code the first person uses to join and become admin
+
+# Images for the landing page. Requests that match a file here are served
+# directly; everything else goes to the worker.
+[assets]
+directory = "../../viewer/static"

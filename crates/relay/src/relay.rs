@@ -70,6 +70,7 @@ CREATE TABLE IF NOT EXISTS hooks (
   last_used INTEGER
 )";
 
+const HOME_HTML: &str = include_str!("../../../viewer/home.html");
 const JOIN_HTML: &str = include_str!("../../../viewer/join.html");
 const VIEW_HTML: &str = include_str!("../../../viewer/index.html");
 
@@ -165,7 +166,8 @@ impl Smoko {
 
         match (method, segs.as_slice()) {
             (Method::Options, _) => cors(Response::empty()?.with_status(204)),
-            (Method::Get, []) | (Method::Get, ["join"]) => html(JOIN_HTML),
+            (Method::Get, []) => html(HOME_HTML),
+            (Method::Get, ["join"]) => html(JOIN_HTML),
             (Method::Get, ["view"]) => html(VIEW_HTML),
             (Method::Get, [".well-known", "smoko"]) => json_resp(
                 &json!({ "protocol": PROTOCOL, "mcp": format!("{base}/mcp"), "join": format!("{base}/join"), "signup": "invite or request" }),
@@ -255,7 +257,9 @@ impl Smoko {
                         let inbox = Inbox::attach(&auth, true, vec![]);
                         let after = url.query_pairs().find(|(k, _)| k == "after").and_then(|(_, v)| v.parse().ok()).unwrap_or(0);
                         let r = if what == "state" {
-                            view::state(&auth, &inbox, "Smoko Break", self.admin_extra(&base).unwrap_or(json!({})))
+                            let mut extra = self.admin_extra(&base).unwrap_or(json!({}));
+                            extra["me"] = json!(m.name);
+                            view::state(&auth, &inbox, "Smoko Break", extra)
                         } else {
                             view::feed(&auth, after, 500)
                         };
@@ -264,8 +268,8 @@ impl Smoko {
                             Err(e) => json_error(&e),
                         }
                     }
-                    Ok(Some(_)) => json_error(&Error::new(Code::Forbidden, "the viewer is for admins")),
-                    _ => json_error(&Error::new(Code::Unauthorized, "paste an admin token")),
+                    Ok(Some(_)) => json_error(&Error::new(Code::Forbidden, "The viewer is for admins. Ask your agent what's new on Smoko instead.")),
+                    _ => json_error(&Error::new(Code::Unauthorized, "That token didn't work. Paste the token you got when you joined (it starts with smk_).")),
                 }
             }
             _ => json_error(&Error::new(Code::NotFound, format!("nothing at {path}"))),
