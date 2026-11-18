@@ -9,8 +9,8 @@
   --color-sheet: oklch(15.5% 0.007 160);
   --color-raised: oklch(19% 0.008 160);
   --color-ink: oklch(96.5% 0.006 95);
-  --color-ink-2: oklch(72% 0.012 110);
-  --color-ink-3: oklch(55% 0.012 130);
+  --color-ink-2: oklch(82% 0.012 110);
+  --color-ink-3: oklch(68% 0.012 130);
   --color-rule: oklch(100% 0 0 / 0.08);
   --color-rule-strong: oklch(100% 0 0 / 0.14);
   --color-accent: oklch(95% 0.014 90);

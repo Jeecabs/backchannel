@@ -22,7 +22,7 @@
     background: radial-gradient(42rem 22rem at 18% 0%, oklch(84% 0.14 88 / 0.07), transparent 70%), radial-gradient(40rem 24rem at 82% 10%, oklch(74% 0.09 160 / 0.06), transparent 70%); }
   .hero h1 { font-size: var(--text-display); font-weight: 560; letter-spacing: -0.035em; line-height: 1.02; max-width: 15ch; }
   .hero .row { display: flex; flex-wrap: wrap; align-items: end; justify-content: space-between; gap: var(--space-md); margin-top: var(--space-lg); }
-  .hero .lede { font-size: var(--text-lg); color: var(--color-ink-2); max-width: 46ch; line-height: 1.5; }
+  .hero .lede { font-size: var(--text-lg); color: var(--color-ink-2); max-width: 52ch; line-height: 1.5; }
   .hero .ctas { display: flex; align-items: center; gap: var(--space-md); }
   .hero .ctas a.link { color: var(--color-ink-2); text-decoration: none; font-size: var(--text-sm); white-space: nowrap; }
   .hero .ctas a.link:hover { color: var(--color-ink); }
@@ -77,8 +77,8 @@
 
   /* Statement */
   .statement { padding-bottom: var(--space-3xl); }
-  .statement p { font: 560 var(--text-2xl)/1.2 var(--font-display); letter-spacing: -0.025em; max-width: 30ch; color: var(--color-ink); }
-  .statement p span { color: var(--color-ink-3); }
+  .statement p { font: 560 var(--text-2xl)/1.25 var(--font-display); letter-spacing: -0.025em; color: var(--color-ink); text-wrap: pretty; }
+  .statement p span { color: var(--color-ink-2); }
 
   /* Three things it does, with line drawings. */
   .things { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-top: 1px solid var(--color-rule); }
@@ -87,14 +87,14 @@
   .thing svg { width: 100%; max-width: 15rem; height: 9rem; display: block; margin-bottom: var(--space-lg); color: var(--color-ink-3); }
   .thing svg .hi { color: var(--color-ink-2); }
   .thing h3 { font-size: var(--text-md); font-weight: 560; letter-spacing: -0.01em; }
-  .thing p { color: var(--color-ink-3); margin-top: 0.35rem; font-size: var(--text-sm); max-width: 30ch; }
+  .thing p { color: var(--color-ink-2); margin-top: 0.35rem; font-size: var(--text-sm); }
 
   /* Setup */
   .setup, .close { position: relative; }
   .setup::before, .close::before { content: ""; position: absolute; top: 0; left: var(--pad); right: var(--pad); height: 1px; background: var(--color-rule); }
   .setup { padding-block: var(--space-3xl); display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr); gap: var(--space-xl); }
   .setup h2 { font-size: var(--text-2xl); }
-  .setup .lead { color: var(--color-ink-2); margin-top: var(--space-sm); max-width: 32ch; font-size: var(--text-lg); line-height: 1.5; }
+  .setup .lead { color: var(--color-ink-2); margin-top: var(--space-sm); font-size: var(--text-lg); line-height: 1.5; }
   .steps { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-md); }
   .steps li { display: grid; grid-template-columns: 1.5rem minmax(0, 1fr); gap: var(--space-xs); color: var(--color-ink-2); }
   .steps li b { color: var(--color-ink); font-weight: 560; }
