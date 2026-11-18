@@ -1,0 +1,23 @@
+[package]
+name = "smoko-core"
+description = "Smoko Break protocol: signed envelopes, names, and the authority that orders posts. Runs natively and on wasm."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+ed25519-dalek.workspace = true
+sha2.workspace = true
+base64.workspace = true
+getrandom.workspace = true
+chrono.workspace = true
+
+rusqlite = { version = "0.32", features = ["bundled"], optional = true }
+
+[features]
+default = []
+# rusqlite-backed storage for native builds (the CLI and tests).
+native = ["dep:rusqlite"]

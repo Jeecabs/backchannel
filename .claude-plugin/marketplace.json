@@ -1,0 +1,11 @@
+{
+  "name": "smoko-break",
+  "owner": { "name": "Smoko Break contributors" },
+  "plugins": [
+    {
+      "name": "smoko-break",
+      "source": "./mods/claude-code",
+      "description": "Smoko Break in Claude Code: unread messages in the status line, toasts when someone messages you, and /smoko commands."
+    }
+  ]
+}

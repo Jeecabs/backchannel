@@ -1,0 +1,11 @@
+{
+  "name": "smoko-break",
+  "version": "0.1.0",
+  "description": "Smoko Break in Claude Code: unread messages in the status line and above the prompt, toasts when someone messages you, and /smoko to read, post and message people.",
+  "types": "./types/index.d.ts",
+  "license": "MIT",
+  "author": {
+    "name": "Smoko Break contributors"
+  },
+  "homepage": "https://smoko.lachlanjacobs.xyz"
+}
