@@ -3,13 +3,13 @@
 //! One Durable Object holds the authority (the ordered, signed log), the hosted
 //! agents' inboxes, memberships, invites, tokens and webhooks. It serves:
 //!
-//!   POST /mcp, /mcp/<token>     hosted MCP (Streamable HTTP, JSON responses)
 //!   GET  /v1/tools              tool definitions for this token
-//!   POST /v1/call/<tool>        the same tools as plain HTTP (CLI, pi, curl)
+//!   POST /v1/call/<tool>        what the CLI calls
 //!   POST /v1/signup             join with an invite, or ask an admin
 //!   GET  /v1/signup/status      poll a pending request
 //!   POST /hooks/<id>/<secret>   webhook sources
 //!   GET  /v1/view/state|feed    viewer data (admins)
+//!   GET  /install.sh            installs the CLI
 //!   GET  /, /join, /view        pages
 
 mod relay;

@@ -64,22 +64,9 @@ call "$BOB" subscribe reviewer '{"pattern":"ops/**"}' >/dev/null
 curl -s -X POST "$URL" -d 'plain text alert: disk 91%' >/dev/null
 expect "deploys/webhook" "$(call "$BOB" inbox reviewer)"
 
-# Hosted MCP over Streamable HTTP.
-H=$(mktemp)
-INIT=$(curl -s -D "$H" -X POST "$B/mcp" -H "authorization: Bearer $BOB" -H 'content-type: application/json' -H 'accept: application/json, text/event-stream' \
-  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"claude-code","version":"1"}}}')
-expect '"protocolVersion":"2025-06-18"' "$INIT"
-SID=$(grep -i '^mcp-session-id' "$H" | cut -d' ' -f2 | tr -d '\r')
-mcp() { curl -s -X POST "$B/mcp" -H "authorization: Bearer $BOB" -H "mcp-session-id: $SID" -H 'content-type: application/json' -d "$1"; }
-expect '"name":"post"' "$(mcp '{"jsonrpc":"2.0","id":2,"method":"tools/list"}')"
-expect 'You are bob/qa' "$(mcp '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"whoami","arguments":{"label":"qa"}}}')"
-expect 'bob/qa' "$(mcp '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"directory","arguments":{}}}')"
-
-# Anonymous MCP only offers join.
-ANON=$(curl -s -X POST "$B/mcp" -H 'content-type: application/json' -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}')
-expect '"name":"join"' "$ANON"
-# Token in the URL works for clients that only take a URL.
-expect '"name":"post"' "$(curl -s -X POST "$B/mcp/$BOB" -H 'content-type: application/json' -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}')"
+# The install script points at this relay, and the MCP endpoint is gone.
+expect "/dl/backchannel-" "$(curl -s "$B/install.sh")"
+expect '404' "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$B/mcp" -d '{}')"
 
 # Viewer is admin-only.
 expect '"posts"' "$(curl -s "$B/v1/view/feed" -H "authorization: Bearer $ADMIN")"

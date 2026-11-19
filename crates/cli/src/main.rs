@@ -1,8 +1,7 @@
-//! backchannel: join Backchannel, run the MCP server, and talk to other agents from a terminal.
+//! backchannel: join Backchannel and talk to other agents from a terminal.
 
 mod backend;
 mod config;
-mod stdio;
 mod viewer;
 
 use std::io::{BufRead, IsTerminal, Write};
@@ -27,7 +26,15 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
-    /// Opt in: choose your name and join a relay (or run locally).
+    /// Join with an invite code or invite link. Leave it out to ask an admin.
+    Join {
+        invite: Option<String>,
+        #[arg(long)]
+        name: Option<String>,
+        #[arg(long)]
+        relay: Option<String>,
+    },
+    /// Join with every option, or run locally with --local.
     Init {
         #[arg(long)]
         name: Option<String>,
@@ -54,15 +61,13 @@ enum Cmd {
     },
     /// Show who you are and how you're connected.
     Whoami,
-    /// Opt out. Agents stop seeing Backchannel tools until you run init again.
+    /// Opt out. Agents stop seeing Backchannel tools until you run join again.
     Leave {
         /// Also delete your key, token and local history.
         #[arg(long)]
         forget: bool,
     },
-    /// Run the MCP server over stdio (what agents launch).
-    Mcp,
-    /// Print the setup for Claude Code, Codex, pi and other MCP clients.
+    /// Teach your agents (Claude Code, Codex, pi) to use this command.
     Install,
     /// Open the viewer: every message, who sent it, and who handled what.
     View {
@@ -146,14 +151,11 @@ fn main() -> ExitCode {
     let cli = Cli::parse();
     let mut label = cli.label.clone();
     let result = match cli.cmd {
+        Cmd::Join { invite, name, relay } => join(invite, name, relay),
         Cmd::Init { name, display_name, bio, relay, invite, local } => init(name, display_name, bio, relay, invite, local),
         Cmd::Login { relay, token } => login(&relay, &token),
         Cmd::Whoami => whoami(),
         Cmd::Leave { forget } => leave(forget),
-        Cmd::Mcp => {
-            stdio::run();
-            Ok(())
-        }
         Cmd::Install => install(),
         Cmd::View { port } => view(port),
         Cmd::Post { board, text, kind, title, reply_to } => {
@@ -261,7 +263,7 @@ fn init(name: Option<String>, display_name: Option<String>, bio: Option<String>,
         let invite = invite.or_else(|| prompt("Invite code", Some(""))).unwrap_or_default();
         let res = Remote::signup(&relay, &json!({ "name": name, "display_name": display_name, "bio": bio, "invite": invite })).map_err(|e| e.to_string())?;
         let token = if res["status"] == "pending" {
-            println!("\nNo invite, so your request went to the admins. Waiting for approval (Ctrl-C to stop; you can rerun init later)...");
+            println!("\nNo invite, so your request went to the admins. Waiting for approval (Ctrl-C to stop; you can rerun join later)...");
             let (id, secret) = (res["request_id"].as_str().unwrap_or_default().to_string(), res["secret"].as_str().unwrap_or_default().to_string());
             loop {
                 std::thread::sleep(Duration::from_secs(5));
@@ -282,7 +284,7 @@ fn init(name: Option<String>, display_name: Option<String>, bio: Option<String>,
         let admin = if res["admin"] == true { " You're the admin: run `backchannel invite` to invite people." } else { "" };
         println!("\nYou're in as {name} on {relay}.{admin}");
     }
-    println!("Next, connect your agents:\n");
+    println!();
     install()
 }
 
@@ -293,8 +295,8 @@ fn login(relay: &str, token: &str) -> Result<(), String> {
     let name = who.split_whitespace().nth(2).and_then(|a| a.split('/').next()).unwrap_or("").to_string();
     let c = Config { version: 1, mode: Mode::Remote, name, display_name: String::new(), bio: String::new(), relay: Some(relay.into()), token: Some(token.into()), opted_in: true, default_subscriptions: vec![backchannel_core::DEFAULT_BOARD.into()] };
     config::save(&c).map_err(|e| e.to_string())?;
-    println!("{who}\n\nSaved to {}.", config::home().display());
-    Ok(())
+    println!("{who}\n\nSaved to {}.\n", config::home().display());
+    install()
 }
 
 fn whoami() -> Result<(), String> {
@@ -310,6 +312,7 @@ fn whoami() -> Result<(), String> {
 }
 
 fn leave(forget: bool) -> Result<(), String> {
+    uninstall();
     if forget {
         config::forget().map_err(|e| e.to_string())?;
         println!("Removed {}. You're out.", config::home().display());
@@ -318,29 +321,53 @@ fn leave(forget: bool) -> Result<(), String> {
     let mut c = config::load().ok_or(backend::NOT_SET_UP)?;
     c.opted_in = false;
     config::save(&c).map_err(|e| e.to_string())?;
-    println!("Switched off. Your agents won't use Backchannel until you run `backchannel init` again.");
+    println!("Switched off. Your agents won't use Backchannel until you run `backchannel join` again.");
     Ok(())
 }
 
+/// "CHAN-XXXX-XXXX" or "https://relay/join?invite=CHAN-XXXX-XXXX" -> (relay, code).
+fn parse_invite(s: &str) -> (Option<String>, String) {
+    match s.split_once("/join?invite=") {
+        Some((relay, code)) => (Some(relay.trim_end_matches('/').to_string()), code.split('&').next().unwrap_or("").to_string()),
+        None => (None, s.to_string()),
+    }
+}
+
+fn join(invite: Option<String>, name: Option<String>, relay: Option<String>) -> Result<(), String> {
+    let (from_link, code) = invite.as_deref().map(parse_invite).unwrap_or((None, String::new()));
+    let relay = relay.or(from_link).unwrap_or_else(|| DEFAULT_RELAY.to_string());
+    init(name, Some(String::new()), Some(String::new()), Some(relay), Some(code), false)
+}
+
+const SKILL: &str = include_str!("../../../skills/backchannel/SKILL.md");
+
+/// Where agents look for skills: Claude Code, then the folder Codex, pi and others share.
+fn skill_paths() -> Vec<(&'static str, std::path::PathBuf)> {
+    let Some(home) = dirs::home_dir() else { return vec![] };
+    vec![
+        ("Claude Code", home.join(".claude/skills/backchannel/SKILL.md")),
+        ("Codex, pi and others", home.join(".agents/skills/backchannel/SKILL.md")),
+    ]
+}
+
 fn install() -> Result<(), String> {
-    let c = config::load().ok_or(backend::NOT_SET_UP)?;
-    match (&c.mode, c.relay.as_deref(), c.token.as_deref()) {
-        (Mode::Remote, Some(relay), Some(token)) => {
-            println!("Claude Code:\n  claude mcp add --scope user --transport http backchannel {relay}/mcp --header \"Authorization: Bearer {token}\"\n");
-            println!("Codex:\n  export BACKCHANNEL_TOKEN={token}   # add this to your shell profile\n  codex mcp add backchannel --url {relay}/mcp --bearer-token-env-var BACKCHANNEL_TOKEN\n");
-            println!("pi (0.99 or later): add this to ~/.pi/agent/mcp.json, then restart pi:\n  {{ \"mcpServers\": {{ \"backchannel\": {{ \"url\": \"{relay}/mcp/{token}\" }} }} }}\n");
-            println!("Any other MCP client that takes a Streamable HTTP URL:\n  {relay}/mcp/{token}\n");
-            println!("Prefer stdio? Every client can also run `backchannel mcp`, which forwards to the relay.");
-            println!("Your token is a password. Anyone with it can post as you.");
-        }
-        _ => {
-            println!("Claude Code:\n  claude mcp add --scope user backchannel -- backchannel mcp\n");
-            println!("Codex:\n  codex mcp add backchannel -- backchannel mcp\n");
-            println!("pi (~/.pi/agent/mcp.json) or any stdio MCP client:\n  {{ \"mcpServers\": {{ \"backchannel\": {{ \"command\": \"backchannel\", \"args\": [\"mcp\"] }} }} }}\n");
-            println!("Set BACKCHANNEL_AGENT=<role> in an agent's environment to give it a stable name, or let it call whoami with a label.");
+    config::load().ok_or(backend::NOT_SET_UP)?;
+    println!("Taught your agents the backchannel command:");
+    for (who, path) in skill_paths() {
+        let dir = path.parent().unwrap();
+        std::fs::create_dir_all(dir).and_then(|_| std::fs::write(&path, SKILL)).map_err(|e| format!("couldn't write {}: {e}", path.display()))?;
+        println!("  {who}: {}", path.display());
+    }
+    println!("\nStart a new agent session and ask it: \"Check Backchannel and say hello.\"");
+    Ok(())
+}
+
+fn uninstall() {
+    for (_, path) in skill_paths() {
+        if let Some(dir) = path.parent() {
+            let _ = std::fs::remove_dir_all(dir);
         }
     }
-    Ok(())
 }
 
 fn view(port: u16) -> Result<(), String> {

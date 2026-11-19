@@ -4,7 +4,6 @@ use serde_json::{json, Value};
 use backchannel_core::authority::{Authority, Mode, Profile};
 use backchannel_core::crypto::{b64, iso, random_bytes, sha256_b64, sign_envelope, ulid, KeyPair};
 use backchannel_core::inbox::Inbox;
-use backchannel_core::mcp::{self, Incoming, Server};
 use backchannel_core::names::{is_agent_label, is_board_name, is_name};
 use backchannel_core::sql::{int, opt_text, text, Sql};
 use backchannel_core::tools::{self, opt_int, opt_str, req_str, Ctx, Me, Outcome};
@@ -51,14 +50,6 @@ CREATE TABLE IF NOT EXISTS requests (
   decided_by TEXT,
   created_at INTEGER NOT NULL
 );
-CREATE TABLE IF NOT EXISTS sessions (
-  id TEXT PRIMARY KEY,
-  name TEXT,
-  label TEXT NOT NULL,
-  client TEXT NOT NULL,
-  created_at INTEGER NOT NULL,
-  last_seen INTEGER NOT NULL
-);
 CREATE TABLE IF NOT EXISTS hooks (
   id TEXT PRIMARY KEY,
   secret_hash TEXT NOT NULL,
@@ -73,6 +64,7 @@ CREATE TABLE IF NOT EXISTS hooks (
 const HOME_HTML: &str = include_str!("../../../viewer/home.html");
 const JOIN_HTML: &str = include_str!("../../../viewer/join.html");
 const VIEW_HTML: &str = include_str!("../../../viewer/index.html");
+const INSTALL_SH: &str = include_str!("../../../scripts/install.sh");
 
 fn now() -> i64 {
     Date::now().as_millis() as i64
@@ -170,23 +162,13 @@ impl Backchannel {
             (Method::Get, ["join"]) => html(JOIN_HTML),
             (Method::Get, ["view"]) => html(VIEW_HTML),
             (Method::Get, [".well-known", "backchannel"]) => json_resp(
-                &json!({ "protocol": PROTOCOL, "mcp": format!("{base}/mcp"), "join": format!("{base}/join"), "signup": "invite or request" }),
+                &json!({ "protocol": PROTOCOL, "install": format!("{base}/install.sh"), "join": format!("{base}/join"), "signup": "invite or request" }),
                 200,
             ),
-            (Method::Post, ["mcp"]) => {
-                let t = bearer(&req);
-                self.mcp(&mut req, t, &base).await
-            }
-            (Method::Post, ["mcp", token]) => {
-                let t = token.to_string();
-                self.mcp(&mut req, Some(t), &base).await
-            }
-            (Method::Get, ["mcp", ..]) => Ok(Response::error("This server answers MCP over POST with JSON responses; it does not open an SSE stream.", 405)?),
-            (Method::Delete, ["mcp", ..]) => {
-                if let Some(id) = req.headers().get("mcp-session-id")? {
-                    let _ = self.sql().run("DELETE FROM sessions WHERE id = ?", p![id]);
-                }
-                Ok(Response::empty()?.with_status(204))
+            (Method::Get, ["install.sh"]) => {
+                let mut r = Response::ok(INSTALL_SH.replace("__BASE__", &base))?;
+                r.headers_mut().set("content-type", "text/x-shellscript; charset=utf-8")?;
+                Ok(r)
             }
             (Method::Post, ["v1", "signup"]) => {
                 let body: Value = req.json().await.unwrap_or(json!({}));
@@ -203,7 +185,7 @@ impl Backchannel {
                 })
             }
             (Method::Get, ["v1", "tools"]) => match self.member_for(bearer(&req).as_deref()) {
-                Ok(Some(m)) => json_resp(&json!({ "tools": tool_list(Some(&m)) }), 200),
+                Ok(Some(m)) => json_resp(&json!({ "tools": tool_list(&m) }), 200),
                 Ok(None) => json_error(&Error::new(Code::Unauthorized, "missing or unknown token")),
                 Err(e) => json_error(&e),
             },
@@ -392,110 +374,6 @@ impl Backchannel {
         let invites = sql.query("SELECT prefix, created_by, uses_left, expires_at, note FROM invites WHERE uses_left > 0 AND expires_at > ? ORDER BY created_at DESC", p![now()])?;
         let hooks = sql.query("SELECT id, source, board, kind, owner, created_at, last_used FROM hooks ORDER BY created_at", &[])?;
         Ok(json!({ "mode": "relay", "base": base, "members": members, "requests": requests, "invites": invites, "hooks": hooks }))
-    }
-
-    // ---- MCP over HTTP -------------------------------------------------------
-
-    async fn mcp(&self, req: &mut Request, token: Option<String>, base: &str) -> Result<Response> {
-        let body: Value = match req.json().await {
-            Ok(v) => v,
-            Err(_) => return json_resp(&mcp::error(Value::Null, -32700, "parse error"), 400),
-        };
-        let member = match self.member_for(token.as_deref()) {
-            Ok(m) => m,
-            Err(e) => return json_error(&e),
-        };
-        if token.is_some() && member.is_none() {
-            return json_resp(&json!({ "error": "unknown or revoked token" }), 401);
-        }
-        let mut session_id = req.headers().get("mcp-session-id")?;
-        let batch = body.is_array();
-        let msgs: Vec<Value> = if let Value::Array(a) = body { a } else { vec![body] };
-        let mut replies = Vec::new();
-        for msg in msgs {
-            if let Some(r) = self.mcp_one(&msg, &member, &mut session_id, base).await {
-                replies.push(r);
-            }
-        }
-        let mut resp = if replies.is_empty() {
-            Response::empty()?.with_status(202)
-        } else if batch {
-            json_resp(&Value::Array(replies), 200)?
-        } else {
-            json_resp(&replies.remove(0), 200)?
-        };
-        if let Some(id) = session_id {
-            resp.headers_mut().set("mcp-session-id", &id)?;
-        }
-        Ok(resp)
-    }
-
-    async fn mcp_one(&self, msg: &Value, member: &Option<Member>, session_id: &mut Option<String>, base: &str) -> Option<Value> {
-        let sql = self.sql();
-        // Session: which agent label this connection uses, and (after join) who it is.
-        let session = session_id.as_deref().and_then(|id| sql.one("SELECT * FROM sessions WHERE id = ?", p![id]).ok().flatten());
-        let session_member = session.as_ref().and_then(|s| opt_text(s, "name")).and_then(|n| {
-            sql.one("SELECT role FROM members WHERE name = ? AND active = 1", p![&n]).ok().flatten().map(|r| Member { name: n, admin: text(&r, "role") == "admin" })
-        });
-        let who = member.clone().or(session_member);
-        let tools = tool_list(who.as_ref());
-        let server = Server { name: "backchannel", version: env!("CARGO_PKG_VERSION"), instructions: mcp::INSTRUCTIONS, resources: false };
-
-        match server.handle(msg, &tools) {
-            Incoming::Ignore => None,
-            Incoming::Respond(r) => {
-                if msg["method"] == "initialize" {
-                    let client = msg["params"]["clientInfo"]["name"].as_str().unwrap_or("agent").to_string();
-                    let id = secret("ses_");
-                    let r4 = random_bytes::<2>();
-                    let label = format!("{}-{:02x}{:02x}", slug(&client), r4[0], r4[1]);
-                    let _ = sql.run(
-                        "INSERT INTO sessions (id, name, label, client, created_at, last_seen) VALUES (?, ?, ?, ?, ?, ?)",
-                        p![&id, who.as_ref().map(|m| m.name.clone()), label, client, now(), now()],
-                    );
-                    *session_id = Some(id);
-                }
-                Some(r)
-            }
-            Incoming::Other { id, .. } => Some(mcp::error(id, -32601, "method not found")),
-            Incoming::Call { id, name, args } => {
-                let (mut label, client) = session
-                    .as_ref()
-                    .map(|s| (text(s, "label"), text(s, "client")))
-                    .unwrap_or_else(|| ("agent".into(), "mcp".into()));
-                let result = match (&who, name.as_str()) {
-                    (None, "join") => self.join_tool(&args, session_id.as_deref(), base),
-                    (None, _) => Err(Error::new(Code::Unauthorized, "You're not signed in to Backchannel yet. Ask your user for their invite code and the name they want, then call join.")),
-                    (Some(m), _) => self.run_tool(m, &mut label, &client, &name, &args, base).await,
-                };
-                if let Some(sid) = session_id.as_deref() {
-                    let _ = sql.run("UPDATE sessions SET label = ?, last_seen = ? WHERE id = ?", p![&label, now(), sid]);
-                }
-                Some(match result {
-                    Ok(t) => mcp::tool_text(id, &t, false),
-                    Err(e) => mcp::tool_text(id, &e.to_string(), true),
-                })
-            }
-        }
-    }
-
-    fn join_tool(&self, args: &Value, session_id: Option<&str>, base: &str) -> R<String> {
-        let v = self.signup(args, base)?;
-        if v["status"] != "joined" {
-            return Ok(format!(
-                "No invite code, so the request went to the admins (request {}). Tell your user to wait for approval, then sign up at {base}/join.",
-                v["request_id"].as_str().unwrap_or_default()
-            ));
-        }
-        let name = v["name"].as_str().unwrap_or_default();
-        let token = v["token"].as_str().unwrap_or_default();
-        if let Some(sid) = session_id {
-            self.sql().run("UPDATE sessions SET name = ? WHERE id = ?", p![name, sid])?;
-        }
-        Ok(format!(
-            "Welcome to Backchannel, {name}. This session is signed in now.\n\nTell your user to save this token like a password and reconnect with it so future sessions are signed in too:\n\n{}\n\nCall whoami next.",
-            install_text(base, token)
-        ))
     }
 
     // ---- tools -----------------------------------------------------------------
@@ -756,27 +634,8 @@ fn cors(mut r: Response) -> Result<Response> {
     Ok(r)
 }
 
-fn slug(s: &str) -> String {
-    let mut out = String::new();
-    for c in s.to_lowercase().chars() {
-        if c.is_ascii_alphanumeric() {
-            out.push(c);
-        } else if !out.is_empty() && !out.ends_with('-') {
-            out.push('-');
-        }
-    }
-    let out: String = out.trim_end_matches('-').chars().take(30).collect();
-    if out.is_empty() { "agent".into() } else { out }
-}
-
 fn install_text(base: &str, token: &str) -> String {
-    format!(
-        "Claude Code:\n  claude mcp add --scope user --transport http backchannel {base}/mcp --header \"Authorization: Bearer {token}\"\n\n\
-         Codex:\n  export BACKCHANNEL_TOKEN={token}   # add to your shell profile\n  codex mcp add backchannel --url {base}/mcp --bearer-token-env-var BACKCHANNEL_TOKEN\n\n\
-         pi (0.99 or later): add this to ~/.pi/agent/mcp.json, then restart pi:\n  {{ \"mcpServers\": {{ \"backchannel\": {{ \"url\": \"{base}/mcp/{token}\" }} }} }}\n\n\
-         Any other MCP client that takes a Streamable HTTP URL:\n  {base}/mcp/{token}\n\n\
-         Terminal:\n  backchannel login --relay {base} --token {token}"
-    )
+    format!("curl -fsSL {base}/install.sh | sh -s -- --token {token}")
 }
 
 fn joined(name: &str, token: &str, admin: bool, base: &str) -> Value {
@@ -785,26 +644,11 @@ fn joined(name: &str, token: &str, admin: bool, base: &str) -> Value {
         "name": name,
         "token": token,
         "admin": admin,
-        "mcp_url": format!("{base}/mcp"),
         "install": install_text(base, token),
     })
 }
 
-fn tool_list(m: Option<&Member>) -> Vec<Value> {
-    let Some(m) = m else {
-        return vec![tools::tool(
-            "join",
-            "Sign your user up to Backchannel. Only call this with the name and invite code your user gave you: joining is their decision. Without an invite the request goes to the admins for approval.",
-            json!({
-                "name": { "type": "string", "description": "The name your user chose: 2-32 characters of a-z, 0-9 and -." },
-                "invite": { "type": "string", "description": "Invite code from an admin, like CHAN-XXXX-XXXX." },
-                "display_name": { "type": "string" },
-                "bio": { "type": "string" },
-                "note": { "type": "string", "description": "For a request without an invite: who you are, for the admins." }
-            }),
-            &["name"],
-        )];
-    };
+fn tool_list(m: &Member) -> Vec<Value> {
     let mut t = tools::definitions();
     t.push(tools::tool(
         "create_hook",

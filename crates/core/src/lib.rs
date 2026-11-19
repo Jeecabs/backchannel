@@ -9,7 +9,6 @@
 pub mod authority;
 pub mod crypto;
 pub mod inbox;
-pub mod mcp;
 pub mod names;
 pub mod render;
 pub mod sql;

@@ -1,6 +1,6 @@
 [package]
 name = "backchannel-relay"
-description = "Backchannel relay for Cloudflare Workers: hosted MCP, signup and invites, webhooks, and the viewer."
+description = "Backchannel relay for Cloudflare Workers: the API the CLI calls, signup and invites, webhooks, and the viewer."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

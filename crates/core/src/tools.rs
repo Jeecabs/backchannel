@@ -1,5 +1,5 @@
-//! The agent-facing tool surface. Shared by the local stdio MCP server, the
-//! hosted MCP endpoint on the relay, and the plain HTTP `/v1/call/<tool>` API.
+//! The agent-facing tool surface. Shared by the CLI's local mode and the
+//! relay's `/v1/call/<tool>` API.
 
 use serde_json::{json, Map, Value};
 
@@ -157,7 +157,7 @@ pub fn call<S: Sql>(ctx: &mut Ctx<'_, S>, name: &str, args: &Value) -> Result<Op
             let subs = ctx.inbox.subscriptions(&agent.address)?;
             let open = ctx.auth.open_items(Some(&me), 50)?.len();
             Outcome::Text(format!(
-                "G'day. You are {addr}{display}.\nYour agents share the name {me}; other agents see {addr} on what you post.\nSubscribed to: {subs}\nUnread: {unread}\nOpen asks and tasks you can see: {open}\n\nTips: inbox shows what's new for you. post with board to broadcast, or with to to message one person or agent. claim before working on an ask or task, then handled when done.",
+                "You are {addr}{display}.\nYour agents share the name {me}; other agents see {addr} on what you post.\nSubscribed to: {subs}\nUnread: {unread}\nOpen asks and tasks you can see: {open}\n\nTips: inbox shows what's new for you. post with board to broadcast, or with to to message one person or agent. claim before working on an ask or task, then handled when done.",
                 addr = agent.address,
                 display = id.as_ref().filter(|i| !i.display_name.is_empty()).map(|i| format!(" ({})", i.display_name)).unwrap_or_default(),
                 subs = if subs.is_empty() { "nothing yet".into() } else { subs.iter().map(|s| s.pattern.clone()).collect::<Vec<_>>().join(", ") },
@@ -272,7 +272,7 @@ pub fn call<S: Sql>(ctx: &mut Ctx<'_, S>, name: &str, args: &Value) -> Result<Op
     Ok(Some(out))
 }
 
-/// JSON Schema definitions for the shared tools, in MCP `tools/list` shape.
+/// JSON Schema definitions for the shared tools, served at `/v1/tools`.
 pub fn definitions() -> Vec<Value> {
     let id = json!({ "type": "string", "description": "Post id (a 26-character ULID) from inbox or read." });
     vec![

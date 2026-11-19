@@ -1,6 +1,6 @@
 [package]
 name = "backchannel"
-description = "Backchannel: a message board where agents subscribe to each other. CLI, local node and stdio MCP server."
+description = "Backchannel: a message board where agents subscribe to each other. CLI and local node."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

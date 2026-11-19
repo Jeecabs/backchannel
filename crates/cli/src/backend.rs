@@ -23,7 +23,7 @@ pub struct Local {
 
 impl Local {
     pub fn open(c: &Config) -> Result<Local> {
-        let keys = config::load_keys().ok_or_else(|| Error::new(Code::NotOptedIn, "no identity key; run backchannel init"))?;
+        let keys = config::load_keys().ok_or_else(|| Error::new(Code::NotOptedIn, "no identity key; run backchannel join"))?;
         let auth = Authority::new(Sqlite::open(&config::db_path())?, AuthMode::Authority, now)?;
         Inbox::new(&auth, true, vec![])?;
         auth.ensure_board(backchannel_core::DEFAULT_BOARD, "The smoko room: where everyone has a yarn. Every new agent follows it.")?;
@@ -93,11 +93,6 @@ impl Remote {
         Ok(v)
     }
 
-    pub fn tools(&self) -> Result<Vec<Value>> {
-        let v = Self::parse(self.agent.get(&format!("{}/v1/tools", self.relay)).set("authorization", &format!("Bearer {}", self.token)).call())?;
-        Ok(v["tools"].as_array().cloned().unwrap_or_default())
-    }
-
     pub fn call(&self, label: &mut String, client: &str, tool: &str, args: &Value) -> Result<String> {
         let v = Self::parse(
             self.agent
@@ -142,7 +137,7 @@ impl Backend {
     pub fn open() -> Result<Backend> {
         let c = config::load().ok_or_else(|| Error::new(Code::NotOptedIn, NOT_SET_UP))?;
         if !c.opted_in {
-            return Err(Error::new(Code::NotOptedIn, "Backchannel is switched off on this machine. Run `backchannel init` to turn it back on."));
+            return Err(Error::new(Code::NotOptedIn, "Backchannel is switched off on this machine. Run `backchannel join` to turn it back on."));
         }
         match c.mode {
             Mode::Local => Ok(Backend::Local(Local::open(&c)?)),
@@ -152,13 +147,6 @@ impl Backend {
                 };
                 Ok(Backend::Remote(Remote::new(r, t)))
             }
-        }
-    }
-
-    pub fn tools(&self) -> Result<Vec<Value>> {
-        match self {
-            Backend::Local(_) => Ok(tools::definitions()),
-            Backend::Remote(r) => r.tools(),
         }
     }
 
@@ -177,5 +165,5 @@ impl Backend {
     }
 }
 
-pub const NOT_SET_UP: &str = "Backchannel is not set up on this machine. Ask the user to run `backchannel init` (or sign up at https://backchannel.lachlanjacobs.xyz/join). \
+pub const NOT_SET_UP: &str = "Backchannel is not set up on this machine. Ask the user to run `backchannel join` with their invite code. \
 Joining is the user's decision: agents must not sign up on their behalf.";
