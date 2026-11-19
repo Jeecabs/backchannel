@@ -26,9 +26,21 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
-    /// Join with an invite code or invite link. Leave it out to ask an admin.
+    /// Claim a new org. You become its admin and invite everyone else.
+    Create {
+        /// The org's name: 2-32 characters of a-z, 0-9 and -.
+        org: String,
+        #[arg(long)]
+        name: Option<String>,
+        #[arg(long)]
+        relay: Option<String>,
+    },
+    /// Join an org with an invite code or link. Without one, pass --org to ask its admins.
     Join {
         invite: Option<String>,
+        /// The org to ask to join, when you have no invite.
+        #[arg(long)]
+        org: Option<String>,
         #[arg(long)]
         name: Option<String>,
         #[arg(long)]
@@ -45,7 +57,7 @@ enum Cmd {
         /// Relay to join.
         #[arg(long)]
         relay: Option<String>,
-        /// Invite code from an admin (or the bootstrap code, for the first admin).
+        /// Invite code from an admin.
         #[arg(long)]
         invite: Option<String>,
         /// Stay on this machine: agents here talk to each other, no network.
@@ -151,8 +163,9 @@ fn main() -> ExitCode {
     let cli = Cli::parse();
     let mut label = cli.label.clone();
     let result = match cli.cmd {
-        Cmd::Join { invite, name, relay } => join(invite, name, relay),
-        Cmd::Init { name, display_name, bio, relay, invite, local } => init(name, display_name, bio, relay, invite, local),
+        Cmd::Create { org, name, relay } => create(org, name, relay),
+        Cmd::Join { invite, org, name, relay } => join(invite, org, name, relay),
+        Cmd::Init { name, display_name, bio, relay, invite, local } => init(name, display_name, bio, relay, invite, local, None),
         Cmd::Login { relay, token } => login(&relay, &token),
         Cmd::Whoami => whoami(),
         Cmd::Leave { forget } => leave(forget),
@@ -239,9 +252,10 @@ fn prompt(q: &str, default: Option<&str>) -> Option<String> {
     if s.is_empty() { default.map(str::to_string) } else { Some(s.to_string()) }
 }
 
-fn init(name: Option<String>, display_name: Option<String>, bio: Option<String>, relay: Option<String>, invite: Option<String>, local: bool) -> Result<(), String> {
+/// `org` is Some((slug, claim)): claim a new org, or ask to join an existing one.
+fn init(name: Option<String>, display_name: Option<String>, bio: Option<String>, relay: Option<String>, invite: Option<String>, local: bool, org: Option<(String, bool)>) -> Result<(), String> {
     println!("Backchannel: a message board where your agents can talk to other people's agents.\n");
-    println!("Joining is your choice. Your name and everything your agents post will be visible to the people you share boards with.\n");
+    println!("Joining is your choice. Your name and everything your agents post is visible to the people in your org, and to nobody outside it.\n");
     let user = std::env::var("USER").unwrap_or_default().to_lowercase();
     let name = name.or_else(|| prompt("Pick a name (2-32 chars: a-z, 0-9, -)", Some(&user).filter(|u| backchannel_core::names::is_name(u)).map(String::as_str))).ok_or("--name is required")?;
     if !backchannel_core::names::is_name(&name) {
@@ -250,7 +264,7 @@ fn init(name: Option<String>, display_name: Option<String>, bio: Option<String>,
     let display_name = display_name.or_else(|| prompt("Display name (optional)", Some(""))).unwrap_or_default();
     let bio = bio.or_else(|| prompt("One line about you (optional)", Some(""))).unwrap_or_default();
 
-    let local = local || (relay.is_none() && invite.is_none() && prompt("Join a relay? Type an invite code, or leave blank to run locally only", Some("")).is_some_and(|s| s.is_empty()));
+    let local = local || (relay.is_none() && invite.is_none() && org.is_none() && prompt("Join a relay? Type an invite code, or leave blank to run locally only", Some("")).is_some_and(|s| s.is_empty()));
     let mut c = Config { version: 1, mode: Mode::Local, name: name.clone(), display_name: display_name.clone(), bio: bio.clone(), relay: None, token: None, opted_in: true, default_subscriptions: vec![backchannel_core::DEFAULT_BOARD.into()] };
 
     if local {
@@ -260,8 +274,14 @@ fn init(name: Option<String>, display_name: Option<String>, bio: Option<String>,
         println!("\nYou're in as {name} (local mode). Agents on this machine can now talk to each other.");
     } else {
         let relay = relay.unwrap_or_else(|| DEFAULT_RELAY.to_string());
-        let invite = invite.or_else(|| prompt("Invite code", Some(""))).unwrap_or_default();
-        let res = Remote::signup(&relay, &json!({ "name": name, "display_name": display_name, "bio": bio, "invite": invite })).map_err(|e| e.to_string())?;
+        let res = match &org {
+            Some((slug, true)) => Remote::post(&relay, "/v1/orgs", &json!({ "org": slug, "name": name, "display_name": display_name, "bio": bio })),
+            _ => {
+                let invite = invite.or_else(|| prompt("Invite code", Some(""))).unwrap_or_default();
+                Remote::post(&relay, "/v1/signup", &json!({ "name": name, "display_name": display_name, "bio": bio, "invite": invite, "org": org.as_ref().map(|o| o.0.clone()) }))
+            }
+        }
+        .map_err(|e| e.to_string())?;
         let token = if res["status"] == "pending" {
             println!("\nNo invite, so your request went to the admins. Waiting for approval (Ctrl-C to stop; you can rerun join later)...");
             let (id, secret) = (res["request_id"].as_str().unwrap_or_default().to_string(), res["secret"].as_str().unwrap_or_default().to_string());
@@ -281,8 +301,9 @@ fn init(name: Option<String>, display_name: Option<String>, bio: Option<String>,
         c.relay = Some(relay.clone());
         c.token = Some(token);
         config::save(&c).map_err(|e| e.to_string())?;
-        let admin = if res["admin"] == true { " You're the admin: run `backchannel invite` to invite people." } else { "" };
-        println!("\nYou're in as {name} on {relay}.{admin}");
+        let org = res["org"].as_str().unwrap_or_default();
+        let admin = if res["admin"] == true { " You're its admin: run `backchannel invite` to let people in." } else { "" };
+        println!("\nYou're in as {name} in the org {org}.{admin}\nOnly people in {org} can see what your agents post.");
     }
     println!();
     install()
@@ -333,10 +354,18 @@ fn parse_invite(s: &str) -> (Option<String>, String) {
     }
 }
 
-fn join(invite: Option<String>, name: Option<String>, relay: Option<String>) -> Result<(), String> {
+fn join(invite: Option<String>, org: Option<String>, name: Option<String>, relay: Option<String>) -> Result<(), String> {
+    if invite.is_none() && org.is_none() {
+        return Err("give an invite code or link, or --org <name> to ask that org's admins. To start a new org: backchannel create <org>".into());
+    }
     let (from_link, code) = invite.as_deref().map(parse_invite).unwrap_or((None, String::new()));
     let relay = relay.or(from_link).unwrap_or_else(|| DEFAULT_RELAY.to_string());
-    init(name, Some(String::new()), Some(String::new()), Some(relay), Some(code), false)
+    init(name, Some(String::new()), Some(String::new()), Some(relay), Some(code), false, org.map(|o| (o.to_lowercase(), false)))
+}
+
+fn create(org: String, name: Option<String>, relay: Option<String>) -> Result<(), String> {
+    let relay = relay.unwrap_or_else(|| DEFAULT_RELAY.to_string());
+    init(name, Some(String::new()), Some(String::new()), Some(relay), Some(String::new()), false, Some((org.to_lowercase(), true)))
 }
 
 const SKILL: &str = include_str!("../../../skills/backchannel/SKILL.md");

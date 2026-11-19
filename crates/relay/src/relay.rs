@@ -14,23 +14,33 @@ use crate::store::DoSql;
 
 type R<T> = backchannel_core::Result<T>;
 
+// Every table carries the org it belongs to. Nothing is read or written without it.
 const SCHEMA: &str = "
+CREATE TABLE IF NOT EXISTS orgs (
+  slug TEXT PRIMARY KEY,
+  created_by TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS members (
-  name TEXT PRIMARY KEY,
+  org TEXT NOT NULL,
+  name TEXT NOT NULL,
   role TEXT NOT NULL,
   invited_by TEXT,
   joined_at INTEGER NOT NULL,
-  active INTEGER NOT NULL DEFAULT 1
+  active INTEGER NOT NULL DEFAULT 1,
+  PRIMARY KEY (org, name)
 );
-CREATE TABLE IF NOT EXISTS custody (name TEXT PRIMARY KEY, seed TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS custody (org TEXT NOT NULL, name TEXT NOT NULL, seed TEXT NOT NULL, PRIMARY KEY (org, name));
 CREATE TABLE IF NOT EXISTS tokens (
   hash TEXT PRIMARY KEY,
+  org TEXT NOT NULL,
   name TEXT NOT NULL,
   created_at INTEGER NOT NULL,
   last_used INTEGER
 );
 CREATE TABLE IF NOT EXISTS invites (
   hash TEXT PRIMARY KEY,
+  org TEXT NOT NULL,
   prefix TEXT NOT NULL,
   created_by TEXT NOT NULL,
   uses_left INTEGER NOT NULL,
@@ -40,6 +50,7 @@ CREATE TABLE IF NOT EXISTS invites (
 );
 CREATE TABLE IF NOT EXISTS requests (
   id TEXT PRIMARY KEY,
+  org TEXT NOT NULL,
   secret_hash TEXT NOT NULL,
   name TEXT NOT NULL,
   display_name TEXT NOT NULL DEFAULT '',
@@ -52,6 +63,7 @@ CREATE TABLE IF NOT EXISTS requests (
 );
 CREATE TABLE IF NOT EXISTS hooks (
   id TEXT PRIMARY KEY,
+  org TEXT NOT NULL,
   secret_hash TEXT NOT NULL,
   source TEXT NOT NULL,
   board TEXT NOT NULL,
@@ -60,6 +72,8 @@ CREATE TABLE IF NOT EXISTS hooks (
   created_at INTEGER NOT NULL,
   last_used INTEGER
 )";
+
+const SMOKO: &str = "The smoko room: where everyone has a yarn. Every new agent follows it.";
 
 const HOME_HTML: &str = include_str!("../../../viewer/home.html");
 const JOIN_HTML: &str = include_str!("../../../viewer/join.html");
@@ -86,6 +100,8 @@ fn hash(s: &str) -> String {
 
 #[derive(Clone, Debug)]
 struct Member {
+    /// The org this token belongs to. Every query this member triggers is scoped to it.
+    org: String,
     name: String,
     admin: bool,
 }
@@ -93,16 +109,15 @@ struct Member {
 #[durable_object]
 pub struct Backchannel {
     state: State,
-    env: Env,
+    _env: Env,
 }
 
 impl DurableObject for Backchannel {
     fn new(state: State, env: Env) -> Self {
-        let s = Backchannel { state, env };
+        let s = Backchannel { state, _env: env };
         let auth = Authority::new(s.sql(), Mode::Authority, now).expect("schema");
         Inbox::new(&auth, true, vec![]).expect("schema");
         auth.sql.batch(SCHEMA).expect("schema");
-        auth.ensure_board(DEFAULT_BOARD, "The smoko room: where everyone has a yarn. Every new agent follows it.").expect("backchannel");
         s
     }
 
@@ -143,9 +158,11 @@ impl Backchannel {
         DoSql(self.state.storage().sql())
     }
 
-    fn auth(&self) -> Authority<DoSql> {
+    /// The authority, scoped to one org.
+    fn auth(&self, org: &str) -> Authority<DoSql> {
         let mut a = Authority::attach(self.sql(), Mode::Authority, now);
         a.open_registration = false;
+        a.org = org.to_string();
         a
     }
 
@@ -159,10 +176,10 @@ impl Backchannel {
         match (method, segs.as_slice()) {
             (Method::Options, _) => cors(Response::empty()?.with_status(204)),
             (Method::Get, []) => html(HOME_HTML),
-            (Method::Get, ["join"]) => html(JOIN_HTML),
+            (Method::Get, ["join"]) | (Method::Get, ["new"]) => html(JOIN_HTML),
             (Method::Get, ["view"]) => html(VIEW_HTML),
             (Method::Get, [".well-known", "backchannel"]) => json_resp(
-                &json!({ "protocol": PROTOCOL, "install": format!("{base}/install.sh"), "join": format!("{base}/join"), "signup": "invite or request" }),
+                &json!({ "protocol": PROTOCOL, "install": format!("{base}/install.sh"), "join": format!("{base}/join"), "signup": "claim an org, or join one with an invite" }),
                 200,
             ),
             (Method::Get, ["install.sh"]) => {
@@ -170,6 +187,17 @@ impl Backchannel {
                 r.headers_mut().set("content-type", "text/x-shellscript; charset=utf-8")?;
                 Ok(r)
             }
+            (Method::Post, ["v1", "orgs"]) => {
+                let body: Value = req.json().await.unwrap_or(json!({}));
+                cors(match self.create_org(&body, &base) {
+                    Ok(v) => json_resp(&v, 200)?,
+                    Err(e) => json_error(&e)?,
+                })
+            }
+            (Method::Get, ["v1", "invite", code]) => cors(match self.invite_org(code) {
+                Ok(v) => json_resp(&v, 200)?,
+                Err(e) => json_error(&e)?,
+            }),
             (Method::Post, ["v1", "signup"]) => {
                 let body: Value = req.json().await.unwrap_or(json!({}));
                 cors(match self.signup(&body, &base) {
@@ -195,9 +223,9 @@ impl Backchannel {
                 };
                 let label = req.headers().get("x-backchannel-agent")?.filter(|l| is_agent_label(l)).unwrap_or_else(|| "human".into());
                 let client = req.headers().get("x-backchannel-client")?.unwrap_or_else(|| "http".into());
-                let auth = self.auth();
+                let auth = self.auth(&m.org);
                 let inbox = Inbox::attach(&auth, true, vec![DEFAULT_BOARD.into()]);
-                let me = match self.me(&m.name) {
+                let me = match self.me(&m.org, &m.name) {
                     Ok(me) => me,
                     Err(e) => return json_error(&e),
                 };
@@ -235,12 +263,13 @@ impl Backchannel {
                 let what = what.to_string();
                 match self.member_for(bearer(&req).as_deref()) {
                     Ok(Some(m)) if m.admin => {
-                        let auth = self.auth();
+                        let auth = self.auth(&m.org);
                         let inbox = Inbox::attach(&auth, true, vec![]);
                         let after = url.query_pairs().find(|(k, _)| k == "after").and_then(|(_, v)| v.parse().ok()).unwrap_or(0);
                         let r = if what == "state" {
-                            let mut extra = self.admin_extra(&base).unwrap_or(json!({}));
+                            let mut extra = self.admin_extra(&m.org, &base).unwrap_or(json!({}));
                             extra["me"] = json!(m.name);
+                            extra["org"] = json!(m.org);
                             view::state(&auth, &inbox, "Backchannel", extra)
                         } else {
                             view::feed(&auth, after, 500)
@@ -264,66 +293,81 @@ impl Backchannel {
         let Some(token) = token.filter(|t| !t.is_empty()) else { return Ok(None) };
         let sql = self.sql();
         let Some(r) = sql.one(
-            "SELECT m.name, m.role FROM tokens t JOIN members m ON m.name = t.name WHERE t.hash = ? AND m.active = 1",
+            "SELECT t.org, m.name, m.role FROM tokens t JOIN members m ON m.org = t.org AND m.name = t.name WHERE t.hash = ? AND m.active = 1",
             p![hash(token)],
         )?
         else {
             return Ok(None);
         };
         sql.run("UPDATE tokens SET last_used = ? WHERE hash = ?", p![now(), hash(token)])?;
-        Ok(Some(Member { name: text(&r, "name"), admin: text(&r, "role") == "admin" }))
+        Ok(Some(Member { org: text(&r, "org"), name: text(&r, "name"), admin: text(&r, "role") == "admin" }))
     }
 
-    fn me(&self, name: &str) -> R<Me> {
-        let seed = self.sql().one("SELECT seed FROM custody WHERE name = ?", p![name])?.map(|r| text(&r, "seed"));
+    fn me(&self, org: &str, name: &str) -> R<Me> {
+        let seed = self.sql().one("SELECT seed FROM custody WHERE org = ? AND name = ?", p![org, name])?.map(|r| text(&r, "seed"));
         let keys = seed.and_then(|s| KeyPair::from_seed_b64(&s)).ok_or_else(|| Error::new(Code::Internal, format!("no key held for {name}")))?;
         Ok(Me { name: name.into(), keys })
     }
 
-    /// Creates the identity (with a relay-held key), membership and a token.
-    fn admit(&self, name: &str, display_name: &str, bio: &str, role: &str, invited_by: Option<&str>) -> R<String> {
-        let auth = self.auth();
+    /// Creates the identity (with a relay-held key), membership and a token, all inside `org`.
+    fn admit(&self, org: &str, name: &str, display_name: &str, bio: &str, role: &str, invited_by: Option<&str>) -> R<String> {
+        let auth = self.auth(org);
         if auth.identity(name)?.is_some() {
-            return Err(Error::new(Code::Conflict, format!("the name \"{name}\" is taken")));
+            return Err(Error::new(Code::Conflict, format!("the name \"{name}\" is taken in {org}")));
         }
         let keys = KeyPair::generate();
         auth.register(name, &keys.public_key, Profile { display_name: Some(display_name.into()), bio: Some(bio.into()), ..Default::default() })?;
         let sql = self.sql();
-        sql.run("INSERT OR REPLACE INTO custody (name, seed) VALUES (?, ?)", p![name, keys.secret_key])?;
-        sql.run("INSERT OR REPLACE INTO members (name, role, invited_by, joined_at, active) VALUES (?, ?, ?, ?, 1)", p![name, role, invited_by, now()])?;
+        sql.run("INSERT OR REPLACE INTO custody (org, name, seed) VALUES (?, ?, ?)", p![org, name, keys.secret_key])?;
+        sql.run("INSERT OR REPLACE INTO members (org, name, role, invited_by, joined_at, active) VALUES (?, ?, ?, ?, ?, 1)", p![org, name, role, invited_by, now()])?;
         let token = secret("bch_");
-        sql.run("INSERT INTO tokens (hash, name, created_at) VALUES (?, ?, ?)", p![hash(&token), name, now()])?;
+        sql.run("INSERT INTO tokens (hash, org, name, created_at) VALUES (?, ?, ?, ?)", p![hash(&token), org, name, now()])?;
         Ok(token)
     }
 
-    fn signup(&self, body: &Value, base: &str) -> R<Value> {
+    fn person(body: &Value) -> R<(String, String, String)> {
         let name = req_str(body, "name")?.to_lowercase();
         if !is_name(&name) {
             return Err(Error::new(Code::Invalid, format!("\"{name}\" isn't a valid name: use 2-32 characters of a-z, 0-9 and -")));
         }
-        let display = opt_str(body, "display_name").unwrap_or_default();
-        let bio = opt_str(body, "bio").unwrap_or_default();
+        Ok((name, opt_str(body, "display_name").unwrap_or_default(), opt_str(body, "bio").unwrap_or_default()))
+    }
+
+    fn org_exists(&self, org: &str) -> R<bool> {
+        Ok(self.sql().one("SELECT 1 AS x FROM orgs WHERE slug = ?", p![org])?.is_some())
+    }
+
+    /// Claims an org name. Whoever claims it first is its admin.
+    fn create_org(&self, body: &Value, base: &str) -> R<Value> {
+        let org = req_str(body, "org")?.to_lowercase();
+        if !is_name(&org) {
+            return Err(Error::new(Code::Invalid, format!("\"{org}\" isn't a valid org name: use 2-32 characters of a-z, 0-9 and -")));
+        }
+        let (name, display, bio) = Self::person(body)?;
+        if self.org_exists(&org)? {
+            return Err(Error::new(Code::Conflict, format!("the org \"{org}\" is taken. If it's yours, ask its admin for an invite.")));
+        }
+        self.sql().run("INSERT INTO orgs (slug, created_by, created_at) VALUES (?, ?, ?)", p![&org, &name, now()])?;
+        self.auth(&org).ensure_board(DEFAULT_BOARD, SMOKO)?;
+        let token = self.admit(&org, &name, &display, &bio, "admin", None)?;
+        Ok(joined(&org, &name, &token, true, base))
+    }
+
+    /// Which org an invite code lets you into, so the join page can say so before you commit.
+    fn invite_org(&self, code: &str) -> R<Value> {
+        match self.sql().one("SELECT org FROM invites WHERE hash = ? AND uses_left > 0 AND expires_at > ?", p![hash(&code.to_uppercase()), now()])? {
+            Some(r) => Ok(json!({ "org": text(&r, "org") })),
+            None => Err(Error::new(Code::NotFound, "that invite code isn't valid, has been used up or has expired")),
+        }
+    }
+
+    fn signup(&self, body: &Value, base: &str) -> R<Value> {
+        let (name, display, bio) = Self::person(body)?;
         let invite = opt_str(body, "invite").unwrap_or_default();
         let sql = self.sql();
-        if self.auth().identity(&name)?.is_some() {
-            return Err(Error::new(Code::Conflict, format!("the name \"{name}\" is taken")));
-        }
-
-        let has_members = sql.one("SELECT 1 AS x FROM members LIMIT 1", &[])?.is_some();
-        if !has_members {
-            // Bootstrap: the first person in must hold the deploy-time code, and becomes admin.
-            let code = self.env.secret("BOOTSTRAP_CODE").map(|s| s.to_string()).unwrap_or_default();
-            if code.is_empty() {
-                return Err(Error::new(Code::Unavailable, "this relay has not been bootstrapped: set the BOOTSTRAP_CODE secret"));
-            }
-            if invite.trim() != code.trim() {
-                return Err(Error::new(Code::Forbidden, "the first person to join needs the bootstrap code from whoever deployed this relay"));
-            }
-            let token = self.admit(&name, &display, &bio, "admin", None)?;
-            return Ok(joined(&name, &token, true, base));
-        }
 
         if !invite.is_empty() {
+            // The invite decides the org. A code from one org can never admit you to another.
             let h = hash(&invite.to_uppercase());
             let Some(inv) = sql.one("SELECT * FROM invites WHERE hash = ?", p![&h])? else {
                 return Err(Error::new(Code::Forbidden, "that invite code isn't valid"));
@@ -331,22 +375,33 @@ impl Backchannel {
             if int(&inv, "uses_left") <= 0 || int(&inv, "expires_at") < now() {
                 return Err(Error::new(Code::Forbidden, "that invite has been used up or has expired; ask for a new one"));
             }
-            let token = self.admit(&name, &display, &bio, "member", Some(&text(&inv, "created_by")))?;
-            sql.run("UPDATE invites SET uses_left = uses_left - 1 WHERE hash = ?", p![&h])?;
-            return Ok(joined(&name, &token, false, base));
+            let org = text(&inv, "org");
+            let token = self.admit(&org, &name, &display, &bio, "member", Some(&text(&inv, "created_by")))?;
+            sql.run("UPDATE invites SET uses_left = uses_left - 1 WHERE hash = ? AND org = ?", p![&h, &org])?;
+            return Ok(joined(&org, &name, &token, false, base));
         }
 
-        // No invite: ask the admins.
-        if sql.one("SELECT 1 AS x FROM requests WHERE name = ? AND status = 'pending'", p![&name])?.is_some() {
+        // No invite: name the org and ask its admins.
+        let org = opt_str(body, "org").unwrap_or_default().to_lowercase();
+        if org.is_empty() {
+            return Err(Error::new(Code::Invalid, "say which org you want to join, or use an invite link"));
+        }
+        if !self.org_exists(&org)? {
+            return Err(Error::new(Code::NotFound, format!("there's no org called \"{org}\"")));
+        }
+        if self.auth(&org).identity(&name)?.is_some() {
+            return Err(Error::new(Code::Conflict, format!("the name \"{name}\" is taken in {org}")));
+        }
+        if sql.one("SELECT 1 AS x FROM requests WHERE org = ? AND name = ? AND status = 'pending'", p![&org, &name])?.is_some() {
             return Err(Error::new(Code::Conflict, format!("there's already a pending request for \"{name}\"")));
         }
         let id = ulid(now());
         let s = secret("req_");
         sql.run(
-            "INSERT INTO requests (id, secret_hash, name, display_name, bio, note, status, created_at) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)",
-            p![&id, hash(&s), &name, display, bio, opt_str(body, "note").unwrap_or_default(), now()],
+            "INSERT INTO requests (id, org, secret_hash, name, display_name, bio, note, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?)",
+            p![&id, &org, hash(&s), &name, display, bio, opt_str(body, "note").unwrap_or_default(), now()],
         )?;
-        Ok(json!({ "status": "pending", "request_id": id, "secret": s, "message": "An admin needs to approve you. Keep this page open, or check back with the same link." }))
+        Ok(json!({ "status": "pending", "org": org, "request_id": id, "secret": s, "message": "An admin needs to approve you. Keep this page open, or check back with the same link." }))
     }
 
     fn signup_status(&self, id: &str, s: &str, base: &str) -> R<Value> {
@@ -358,8 +413,8 @@ impl Backchannel {
             "approved" => match opt_text(&r, "token") {
                 Some(token) => {
                     // Hand the token over exactly once.
-                    sql.run("UPDATE requests SET token = NULL WHERE id = ?", p![id])?;
-                    Ok(joined(&text(&r, "name"), &token, false, base))
+                    sql.run("UPDATE requests SET token = NULL WHERE id = ? AND org = ?", p![id, text(&r, "org")])?;
+                    Ok(joined(&text(&r, "org"), &text(&r, "name"), &token, false, base))
                 }
                 None => Ok(json!({ "status": "collected", "message": "This token was already collected. Ask an admin for a new invite if you lost it." })),
             },
@@ -367,12 +422,12 @@ impl Backchannel {
         }
     }
 
-    fn admin_extra(&self, base: &str) -> R<Value> {
+    fn admin_extra(&self, org: &str, base: &str) -> R<Value> {
         let sql = self.sql();
-        let members = sql.query("SELECT name, role, invited_by, joined_at, active FROM members ORDER BY joined_at", &[])?;
-        let requests = sql.query("SELECT id, name, display_name, bio, note, created_at FROM requests WHERE status = 'pending' ORDER BY created_at", &[])?;
-        let invites = sql.query("SELECT prefix, created_by, uses_left, expires_at, note FROM invites WHERE uses_left > 0 AND expires_at > ? ORDER BY created_at DESC", p![now()])?;
-        let hooks = sql.query("SELECT id, source, board, kind, owner, created_at, last_used FROM hooks ORDER BY created_at", &[])?;
+        let members = sql.query("SELECT name, role, invited_by, joined_at, active FROM members WHERE org = ? ORDER BY joined_at", p![org])?;
+        let requests = sql.query("SELECT id, name, display_name, bio, note, created_at FROM requests WHERE org = ? AND status = 'pending' ORDER BY created_at", p![org])?;
+        let invites = sql.query("SELECT prefix, created_by, uses_left, expires_at, note FROM invites WHERE org = ? AND uses_left > 0 AND expires_at > ? ORDER BY created_at DESC", p![org, now()])?;
+        let hooks = sql.query("SELECT id, source, board, kind, owner, created_at, last_used FROM hooks WHERE org = ? ORDER BY created_at", p![org])?;
         Ok(json!({ "mode": "relay", "base": base, "members": members, "requests": requests, "invites": invites, "hooks": hooks }))
     }
 
@@ -382,9 +437,9 @@ impl Backchannel {
         if let Some(t) = self.relay_tool(m, name, args, base)? {
             return Ok(t);
         }
-        let auth = self.auth();
+        let auth = self.auth(&m.org);
         let inbox = Inbox::attach(&auth, true, vec![DEFAULT_BOARD.into()]);
-        let me = self.me(&m.name)?;
+        let me = self.me(&m.org, &m.name)?;
         let mut ctx = Ctx { auth: &auth, inbox: &inbox, me: &me, label: label.clone(), client: client.into() };
         let out = tools::call(&mut ctx, name, args)?;
         *label = ctx.label.clone();
@@ -396,7 +451,7 @@ impl Backchannel {
                 let deadline = now() + timeout_ms;
                 while now() < deadline {
                     Delay::from(Duration::from_millis(500)).await;
-                    let auth = self.auth();
+                    let auth = self.auth(&m.org);
                     let inbox = Inbox::attach(&auth, true, vec![DEFAULT_BOARD.into()]);
                     if inbox.unread(&address)? > 0 {
                         let mut ctx = Ctx { auth: &auth, inbox: &inbox, me: &me, label: label.clone(), client: client.into() };
@@ -413,6 +468,7 @@ impl Backchannel {
     /// Tools only a relay has: invites and approvals (admins), and webhooks.
     fn relay_tool(&self, m: &Member, name: &str, args: &Value, base: &str) -> R<Option<String>> {
         let sql = self.sql();
+        let org = m.org.as_str();
         let admin_only = |what: &str| -> R<()> {
             if m.admin {
                 Ok(())
@@ -427,18 +483,18 @@ impl Backchannel {
                 let days = opt_int(args, "days").unwrap_or(7).clamp(1, 90);
                 let code = invite_code();
                 sql.run(
-                    "INSERT INTO invites (hash, prefix, created_by, uses_left, expires_at, note, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                    p![hash(&code), &code[..10], &m.name, uses, now() + days * 86_400_000, opt_str(args, "note").unwrap_or_default(), now()],
+                    "INSERT INTO invites (hash, org, prefix, created_by, uses_left, expires_at, note, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    p![hash(&code), org, &code[..10], &m.name, uses, now() + days * 86_400_000, opt_str(args, "note").unwrap_or_default(), now()],
                 )?;
                 format!(
-                    "Invite code {code} works {uses} time{} for {days} day{}.\nShare this link: {base}/join?invite={code}\nThey pick their own name when they join.",
-                    if uses == 1 { "" } else { "s" },
+                    "Invite code {code} lets {uses} {} into {org} for {days} day{}.\nShare this link: {base}/join?invite={code}\nThey pick their own name when they join.",
+                    if uses == 1 { "person" } else { "people" },
                     if days == 1 { "" } else { "s" }
                 )
             }
             "invites" => {
                 admin_only("list invites")?;
-                let rows = sql.query("SELECT prefix, created_by, uses_left, expires_at, note FROM invites WHERE uses_left > 0 AND expires_at > ? ORDER BY created_at DESC", p![now()])?;
+                let rows = sql.query("SELECT prefix, created_by, uses_left, expires_at, note FROM invites WHERE org = ? AND uses_left > 0 AND expires_at > ? ORDER BY created_at DESC", p![org, now()])?;
                 if rows.is_empty() {
                     "No live invites.".into()
                 } else {
@@ -451,12 +507,12 @@ impl Backchannel {
             "revoke_invite" => {
                 admin_only("revoke invites")?;
                 let code = req_str(args, "code")?.to_uppercase();
-                sql.run("UPDATE invites SET uses_left = 0 WHERE hash = ? OR prefix = ?", p![hash(&code), code.chars().take(10).collect::<String>()])?;
+                sql.run("UPDATE invites SET uses_left = 0 WHERE org = ? AND (hash = ? OR prefix = ?)", p![org, hash(&code), code.chars().take(10).collect::<String>()])?;
                 "Revoked.".into()
             }
             "requests" => {
                 admin_only("see join requests")?;
-                let rows = sql.query("SELECT name, display_name, bio, note, created_at FROM requests WHERE status = 'pending' ORDER BY created_at", &[])?;
+                let rows = sql.query("SELECT name, display_name, bio, note, created_at FROM requests WHERE org = ? AND status = 'pending' ORDER BY created_at", p![org])?;
                 if rows.is_empty() {
                     "Nobody is waiting.".into()
                 } else {
@@ -472,15 +528,15 @@ impl Backchannel {
             "approve" | "reject" => {
                 admin_only("approve people")?;
                 let who = req_str(args, "name")?;
-                let Some(r) = sql.one("SELECT * FROM requests WHERE name = ? AND status = 'pending'", p![&who])? else {
+                let Some(r) = sql.one("SELECT * FROM requests WHERE org = ? AND name = ? AND status = 'pending'", p![org, &who])? else {
                     return Err(Error::new(Code::NotFound, format!("no pending request from {who}")));
                 };
                 if name == "reject" {
-                    sql.run("UPDATE requests SET status = 'rejected', decided_by = ? WHERE id = ?", p![&m.name, text(&r, "id")])?;
+                    sql.run("UPDATE requests SET status = 'rejected', decided_by = ? WHERE id = ? AND org = ?", p![&m.name, text(&r, "id"), org])?;
                     format!("Rejected {who}.")
                 } else {
-                    let token = self.admit(&who, &text(&r, "display_name"), &text(&r, "bio"), "member", Some(&m.name))?;
-                    sql.run("UPDATE requests SET status = 'approved', token = ?, decided_by = ? WHERE id = ?", p![token, &m.name, text(&r, "id")])?;
+                    let token = self.admit(org, &who, &text(&r, "display_name"), &text(&r, "bio"), "member", Some(&m.name))?;
+                    sql.run("UPDATE requests SET status = 'approved', token = ?, decided_by = ? WHERE id = ? AND org = ?", p![token, &m.name, text(&r, "id"), org])?;
                     format!("Approved {who}. Their signup page will pick up the token.")
                 }
             }
@@ -490,8 +546,8 @@ impl Backchannel {
                 if who == m.name {
                     return Err(Error::new(Code::Invalid, "you can't remove yourself"));
                 }
-                sql.run("UPDATE members SET active = 0 WHERE name = ?", p![&who])?;
-                sql.run("DELETE FROM tokens WHERE name = ?", p![&who])?;
+                sql.run("UPDATE members SET active = 0 WHERE org = ? AND name = ?", p![org, &who])?;
+                sql.run("DELETE FROM tokens WHERE org = ? AND name = ?", p![org, &who])?;
                 format!("Removed {who}. Their tokens no longer work; their past posts stay in the log.")
             }
             "create_hook" => {
@@ -504,7 +560,7 @@ impl Backchannel {
                 if !is_name(&source) {
                     return Err(Error::new(Code::Invalid, format!("\"{source}\" isn't a valid source name: use 2-32 characters of a-z, 0-9 and -")));
                 }
-                let auth = self.auth();
+                let auth = self.auth(org);
                 if !is_board_name(&board) || auth.board(&board)?.is_none() {
                     return Err(Error::new(Code::NotFound, format!("board \"{board}\" does not exist; create it first")));
                 }
@@ -519,14 +575,14 @@ impl Backchannel {
                     None => {
                         let keys = KeyPair::generate();
                         auth.register(&source, &keys.public_key, Profile { display_name: Some(source.clone()), bio: Some(format!("Webhook source run by {}", m.name)), kind: Some("source".into()), owner: Some(m.name.clone()) })?;
-                        sql.run("INSERT OR REPLACE INTO custody (name, seed) VALUES (?, ?)", p![&source, keys.secret_key])?;
+                        sql.run("INSERT OR REPLACE INTO custody (org, name, seed) VALUES (?, ?, ?)", p![org, &source, keys.secret_key])?;
                     }
                 }
                 let id = ulid(now()).to_lowercase()[..12].to_string();
                 let s = secret("");
                 sql.run(
-                    "INSERT INTO hooks (id, secret_hash, source, board, kind, owner, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                    p![&id, hash(&s), &source, &board, kind.as_str(), &m.name, now()],
+                    "INSERT INTO hooks (id, org, secret_hash, source, board, kind, owner, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    p![&id, org, hash(&s), &source, &board, kind.as_str(), &m.name, now()],
                 )?;
                 let url = format!("{base}/hooks/{id}/{s}");
                 format!(
@@ -535,7 +591,7 @@ impl Backchannel {
                 )
             }
             "hooks" => {
-                let rows = sql.query("SELECT id, source, board, kind, owner, last_used FROM hooks WHERE owner = ? OR ? = 1 ORDER BY created_at", p![&m.name, m.admin])?;
+                let rows = sql.query("SELECT id, source, board, kind, owner, last_used FROM hooks WHERE org = ? AND (owner = ? OR ? = 1) ORDER BY created_at", p![org, &m.name, m.admin])?;
                 if rows.is_empty() {
                     "No webhooks yet. Make one with create_hook.".into()
                 } else {
@@ -547,7 +603,7 @@ impl Backchannel {
             }
             "delete_hook" => {
                 let id = req_str(args, "id")?;
-                sql.run("DELETE FROM hooks WHERE id = ? AND (owner = ? OR ? = 1)", p![&id, &m.name, m.admin])?;
+                sql.run("DELETE FROM hooks WHERE org = ? AND id = ? AND (owner = ? OR ? = 1)", p![org, &id, &m.name, m.admin])?;
                 format!("Deleted hook {id} (if it was yours).")
             }
             _ => return Ok(None),
@@ -562,6 +618,8 @@ impl Backchannel {
         let Some(h) = sql.one("SELECT * FROM hooks WHERE id = ? AND secret_hash = ?", p![id, hash(secret)])? else {
             return Err(Error::new(Code::NotFound, "unknown webhook"));
         };
+        // The hook decides the org: a webhook can only ever post inside the org that made it.
+        let org = text(&h, "org");
         let source = text(&h, "source");
         let payload: Value = if ctype.contains("json") || raw.first() == Some(&b'{') {
             serde_json::from_slice(raw).unwrap_or_else(|_| Value::String(String::from_utf8_lossy(raw).into()))
@@ -591,7 +649,7 @@ impl Backchannel {
             }
         });
 
-        let me = self.me(&source)?;
+        let me = self.me(&org, &source)?;
         let t = now();
         let env = Envelope {
             v: PROTOCOL.into(),
@@ -611,7 +669,7 @@ impl Backchannel {
             ext: None,
             sig: String::new(),
         };
-        let auth = self.auth();
+        let auth = self.auth(&org);
         let mut combined = backchannel_core::names::extract_mentions(&body);
         if let Some(m) = &env.mentions {
             combined.extend(m.iter().cloned());
@@ -621,7 +679,7 @@ impl Backchannel {
         env.mentions = Some(combined).filter(|m| !m.is_empty());
         let stored = auth.accept(sign_envelope(env, &me.keys))?;
         Inbox::attach(&auth, true, vec![DEFAULT_BOARD.into()]).fanout()?;
-        sql.run("UPDATE hooks SET last_used = ? WHERE id = ?", p![now(), id])?;
+        sql.run("UPDATE hooks SET last_used = ? WHERE id = ? AND org = ?", p![now(), id, &org])?;
         Ok(json!({ "ok": true, "id": stored.envelope.id, "board": stored.envelope.board, "seq": stored.seq }))
     }
 }
@@ -638,9 +696,10 @@ fn install_text(base: &str, token: &str) -> String {
     format!("curl -fsSL {base}/install.sh | sh -s -- --token {token}")
 }
 
-fn joined(name: &str, token: &str, admin: bool, base: &str) -> Value {
+fn joined(org: &str, name: &str, token: &str, admin: bool, base: &str) -> Value {
     json!({
         "status": "joined",
+        "org": org,
         "name": name,
         "token": token,
         "admin": admin,

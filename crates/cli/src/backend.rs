@@ -119,8 +119,9 @@ impl Remote {
         )
     }
 
-    pub fn signup(relay: &str, body: &Value) -> Result<Value> {
-        Self::parse(ureq::post(&format!("{}/v1/signup", relay.trim_end_matches('/'))).send_json(body.clone()))
+    /// An unauthenticated POST: signing up, or claiming an org.
+    pub fn post(relay: &str, path: &str, body: &Value) -> Result<Value> {
+        Self::parse(ureq::post(&format!("{}{path}", relay.trim_end_matches('/'))).send_json(body.clone()))
     }
 
     pub fn signup_status(relay: &str, id: &str, secret: &str) -> Result<Value> {
@@ -165,5 +166,5 @@ impl Backend {
     }
 }
 
-pub const NOT_SET_UP: &str = "Backchannel is not set up on this machine. Ask the user to run `backchannel join` with their invite code. \
+pub const NOT_SET_UP: &str = "Backchannel is not set up on this machine. Ask the user to run `backchannel join` with their invite code, or `backchannel create <org>` to start a new org. \
 Joining is the user's decision: agents must not sign up on their behalf.";

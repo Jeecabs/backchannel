@@ -47,4 +47,5 @@ esac
 if [ -z "$TOKEN" ]; then
   echo
   echo "Next: backchannel join <your invite code>"
+  echo "  or: backchannel create <org name>   to start a new org"
 fi

@@ -18,33 +18,37 @@ const BACKFILL_MS: i64 = 7 * 24 * 3_600_000;
 
 pub const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS agents (
-  address TEXT PRIMARY KEY,
+  org TEXT NOT NULL,
+  address TEXT NOT NULL,
   name TEXT NOT NULL,
   label TEXT NOT NULL,
   client TEXT NOT NULL DEFAULT '',
   status TEXT NOT NULL DEFAULT '',
   description TEXT NOT NULL DEFAULT '',
   created_at INTEGER NOT NULL,
-  last_seen INTEGER NOT NULL
+  last_seen INTEGER NOT NULL,
+  PRIMARY KEY (org, address)
 );
 CREATE TABLE IF NOT EXISTS subscriptions (
+  org TEXT NOT NULL,
   agent TEXT NOT NULL,
   pattern TEXT NOT NULL,
   kinds TEXT,
   created_at INTEGER NOT NULL,
-  PRIMARY KEY (agent, pattern)
+  PRIMARY KEY (org, agent, pattern)
 );
 CREATE TABLE IF NOT EXISTS deliveries (
   dseq INTEGER PRIMARY KEY,
+  org TEXT NOT NULL,
   agent TEXT NOT NULL,
   post TEXT NOT NULL,
   gseq INTEGER NOT NULL,
   reasons TEXT NOT NULL,
-  UNIQUE (agent, post)
+  UNIQUE (org, agent, post)
 );
-CREATE INDEX IF NOT EXISTS deliveries_agent ON deliveries (agent, dseq);
-CREATE TABLE IF NOT EXISTS cursors (agent TEXT PRIMARY KEY, dseq INTEGER NOT NULL);
-CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value INTEGER NOT NULL)";
+CREATE INDEX IF NOT EXISTS deliveries_org_agent ON deliveries (org, agent, dseq);
+CREATE TABLE IF NOT EXISTS cursors (org TEXT NOT NULL, agent TEXT NOT NULL, dseq INTEGER NOT NULL, PRIMARY KEY (org, agent));
+CREATE TABLE IF NOT EXISTS meta (org TEXT NOT NULL, key TEXT NOT NULL, value INTEGER NOT NULL, PRIMARY KEY (org, key))";
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Agent {
@@ -103,6 +107,11 @@ impl<'a, S: Sql> Inbox<'a, S> {
         &self.auth.sql
     }
 
+    /// The inbox always serves the org of the authority it is attached to.
+    fn org(&self) -> &str {
+        &self.auth.org
+    }
+
     // ---- agents ------------------------------------------------------------
 
     /// Records an agent session. New agents start at "now" with the default subscriptions.
@@ -113,16 +122,16 @@ impl<'a, S: Sql> Inbox<'a, S> {
         let addr = format!("{name}/{label}");
         let now = self.auth.now();
         tx(self.sql(), || {
-            if self.sql().one("SELECT 1 AS x FROM agents WHERE address = ?", p![&addr])?.is_none() {
+            if self.sql().one("SELECT 1 AS x FROM agents WHERE org = ? AND address = ?", p![self.org(), &addr])?.is_none() {
                 self.sql().run(
-                    "INSERT INTO agents (address, name, label, client, status, description, created_at, last_seen) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                    p![&addr, name, label, info.client.clone().unwrap_or_default(), info.status.clone().unwrap_or_default(), info.description.clone().unwrap_or_default(), now, now],
+                    "INSERT INTO agents (org, address, name, label, client, status, description, created_at, last_seen) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    p![self.org(), &addr, name, label, info.client.clone().unwrap_or_default(), info.status.clone().unwrap_or_default(), info.description.clone().unwrap_or_default(), now, now],
                 )?;
-                let top = self.sql().one("SELECT MAX(dseq) AS d FROM deliveries", &[])?.map(|r| int(&r, "d")).unwrap_or(0);
-                self.sql().run("INSERT OR REPLACE INTO cursors (agent, dseq) VALUES (?, ?)", p![&addr, top])?;
+                let top = self.sql().one("SELECT MAX(dseq) AS d FROM deliveries WHERE org = ?", p![self.org()])?.map(|r| int(&r, "d")).unwrap_or(0);
+                self.sql().run("INSERT OR REPLACE INTO cursors (org, agent, dseq) VALUES (?, ?, ?)", p![self.org(), &addr, top])?;
                 for pat in &self.default_subscriptions {
                     if is_pattern(pat) {
-                        self.sql().run("INSERT OR IGNORE INTO subscriptions (agent, pattern, kinds, created_at) VALUES (?, ?, NULL, ?)", p![&addr, pat, now])?;
+                        self.sql().run("INSERT OR IGNORE INTO subscriptions (org, agent, pattern, kinds, created_at) VALUES (?, ?, ?, NULL, ?)", p![self.org(), &addr, pat, now])?;
                     }
                 }
                 // Board traffic starts from now, but anything addressed to this person
@@ -136,15 +145,15 @@ impl<'a, S: Sql> Inbox<'a, S> {
                     let personal: Vec<String> = self.reasons(&post, &agent, &[])?.into_iter().filter(|r| r == "direct message" || r == "mentions you").collect();
                     if !personal.is_empty() {
                         self.sql().run(
-                            "INSERT OR IGNORE INTO deliveries (agent, post, gseq, reasons) VALUES (?, ?, ?, ?)",
-                            p![&addr, &post.envelope.id, post.gseq, serde_json::to_string(&personal).unwrap()],
+                            "INSERT OR IGNORE INTO deliveries (org, agent, post, gseq, reasons) VALUES (?, ?, ?, ?, ?)",
+                            p![self.org(), &addr, &post.envelope.id, post.gseq, serde_json::to_string(&personal).unwrap()],
                         )?;
                     }
                 }
             } else {
                 self.sql().run(
-                    "UPDATE agents SET last_seen = ?, client = COALESCE(?, client), status = COALESCE(?, status), description = COALESCE(?, description) WHERE address = ?",
-                    p![now, info.client.clone(), info.status.clone(), info.description.clone(), &addr],
+                    "UPDATE agents SET last_seen = ?, client = COALESCE(?, client), status = COALESCE(?, status), description = COALESCE(?, description) WHERE org = ? AND address = ?",
+                    p![now, info.client.clone(), info.status.clone(), info.description.clone(), self.org(), &addr],
                 )?;
             }
             Ok(())
@@ -156,7 +165,7 @@ impl<'a, S: Sql> Inbox<'a, S> {
     pub fn agents(&self, name: Option<&str>) -> Result<Vec<Agent>> {
         Ok(self
             .sql()
-            .query("SELECT * FROM agents WHERE ? IS NULL OR name = ? ORDER BY last_seen DESC", p![name, name])?
+            .query("SELECT * FROM agents WHERE org = ? AND (? IS NULL OR name = ?) ORDER BY last_seen DESC", p![self.org(), name, name])?
             .iter()
             .map(|r| Agent {
                 address: text(r, "address"),
@@ -182,21 +191,21 @@ impl<'a, S: Sql> Inbox<'a, S> {
         }
         let kinds = kinds.filter(|k| !k.is_empty()).map(|k| serde_json::to_string(&k).unwrap());
         self.sql().run(
-            "INSERT OR REPLACE INTO subscriptions (agent, pattern, kinds, created_at) VALUES (?, ?, ?, ?)",
-            p![address, pattern, kinds, self.auth.now()],
+            "INSERT OR REPLACE INTO subscriptions (org, agent, pattern, kinds, created_at) VALUES (?, ?, ?, ?, ?)",
+            p![self.org(), address, pattern, kinds, self.auth.now()],
         )?;
         self.subscriptions(address)
     }
 
     pub fn unsubscribe(&self, address: &str, pattern: &str) -> Result<Vec<Subscription>> {
-        self.sql().run("DELETE FROM subscriptions WHERE agent = ? AND pattern = ?", p![address, pattern])?;
+        self.sql().run("DELETE FROM subscriptions WHERE org = ? AND agent = ? AND pattern = ?", p![self.org(), address, pattern])?;
         self.subscriptions(address)
     }
 
     pub fn subscriptions(&self, address: &str) -> Result<Vec<Subscription>> {
         Ok(self
             .sql()
-            .query("SELECT pattern, kinds FROM subscriptions WHERE agent = ? ORDER BY pattern", p![address])?
+            .query("SELECT pattern, kinds FROM subscriptions WHERE org = ? AND agent = ? ORDER BY pattern", p![self.org(), address])?
             .iter()
             .map(|r| Subscription { pattern: text(r, "pattern"), kinds: opt_text(r, "kinds").and_then(|k| serde_json::from_str(&k).ok()) })
             .collect())
@@ -205,11 +214,11 @@ impl<'a, S: Sql> Inbox<'a, S> {
     // ---- fan-out -----------------------------------------------------------
 
     fn meta(&self, key: &str) -> Result<i64> {
-        Ok(self.sql().one("SELECT value FROM meta WHERE key = ?", p![key])?.map(|r| int(&r, "value")).unwrap_or(0))
+        Ok(self.sql().one("SELECT value FROM meta WHERE org = ? AND key = ?", p![self.org(), key])?.map(|r| int(&r, "value")).unwrap_or(0))
     }
 
     fn set_meta(&self, key: &str, value: i64) -> Result<()> {
-        self.sql().run("INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = MAX(meta.value, excluded.value)", p![key, value])
+        self.sql().run("INSERT INTO meta (org, key, value) VALUES (?, ?, ?) ON CONFLICT(org, key) DO UPDATE SET value = MAX(meta.value, excluded.value)", p![self.org(), key, value])
     }
 
     pub fn sync_cursor(&self) -> Result<i64> {
@@ -230,7 +239,7 @@ impl<'a, S: Sql> Inbox<'a, S> {
                 let posts = self.auth.feed(None, after, 200, true)?;
                 let Some(last) = posts.last().map(|p| p.gseq) else { return Ok(true) };
                 let agents = self.agents(None)?;
-                let subs = self.sql().query("SELECT agent, pattern, kinds FROM subscriptions", &[])?;
+                let subs = self.sql().query("SELECT agent, pattern, kinds FROM subscriptions WHERE org = ?", p![self.org()])?;
                 for post in &posts {
                     for a in &agents {
                         let mine: Vec<(String, Option<String>)> =
@@ -240,8 +249,8 @@ impl<'a, S: Sql> Inbox<'a, S> {
                             continue;
                         }
                         self.sql().run(
-                            "INSERT OR IGNORE INTO deliveries (agent, post, gseq, reasons) VALUES (?, ?, ?, ?)",
-                            p![&a.address, &post.envelope.id, post.gseq, serde_json::to_string(&reasons).unwrap()],
+                            "INSERT OR IGNORE INTO deliveries (org, agent, post, gseq, reasons) VALUES (?, ?, ?, ?, ?)",
+                            p![self.org(), &a.address, &post.envelope.id, post.gseq, serde_json::to_string(&reasons).unwrap()],
                         )?;
                         if !touched.contains(&a.address) {
                             touched.push(a.address.clone());
@@ -303,15 +312,15 @@ impl<'a, S: Sql> Inbox<'a, S> {
     // ---- reading -----------------------------------------------------------
 
     fn cursor(&self, address: &str) -> Result<i64> {
-        Ok(self.sql().one("SELECT dseq FROM cursors WHERE agent = ?", p![address])?.map(|r| int(&r, "dseq")).unwrap_or(0))
+        Ok(self.sql().one("SELECT dseq FROM cursors WHERE org = ? AND agent = ?", p![self.org(), address])?.map(|r| int(&r, "dseq")).unwrap_or(0))
     }
 
     /// New deliveries after the agent's cursor. Advances the cursor unless `peek`.
     pub fn read(&self, address: &str, limit: i64, peek: bool) -> Result<(Vec<Delivery>, i64)> {
         let cursor = self.cursor(address)?;
         let rows = self.sql().query(
-            "SELECT dseq, post, reasons FROM deliveries WHERE agent = ? AND dseq > ? ORDER BY dseq LIMIT ?",
-            p![address, cursor, limit.clamp(1, 100)],
+            "SELECT dseq, post, reasons FROM deliveries WHERE org = ? AND agent = ? AND dseq > ? ORDER BY dseq LIMIT ?",
+            p![self.org(), address, cursor, limit.clamp(1, 100)],
         )?;
         let mut items = Vec::new();
         for r in &rows {
@@ -323,19 +332,19 @@ impl<'a, S: Sql> Inbox<'a, S> {
         if !peek && last > cursor {
             self.ack(address, last)?;
         }
-        let remaining = self.sql().one("SELECT COUNT(*) AS n FROM deliveries WHERE agent = ? AND dseq > ?", p![address, last])?.map(|r| int(&r, "n")).unwrap_or(0);
+        let remaining = self.sql().one("SELECT COUNT(*) AS n FROM deliveries WHERE org = ? AND agent = ? AND dseq > ?", p![self.org(), address, last])?.map(|r| int(&r, "n")).unwrap_or(0);
         Ok((items, remaining))
     }
 
     pub fn ack(&self, address: &str, dseq: i64) -> Result<()> {
         self.sql().run(
-            "INSERT INTO cursors (agent, dseq) VALUES (?, ?) ON CONFLICT(agent) DO UPDATE SET dseq = MAX(cursors.dseq, excluded.dseq)",
-            p![address, dseq],
+            "INSERT INTO cursors (org, agent, dseq) VALUES (?, ?, ?) ON CONFLICT(org, agent) DO UPDATE SET dseq = MAX(cursors.dseq, excluded.dseq)",
+            p![self.org(), address, dseq],
         )
     }
 
     pub fn unread(&self, address: &str) -> Result<i64> {
         let c = self.cursor(address)?;
-        Ok(self.sql().one("SELECT COUNT(*) AS n FROM deliveries WHERE agent = ? AND dseq > ?", p![address, c])?.map(|r| int(&r, "n")).unwrap_or(0))
+        Ok(self.sql().one("SELECT COUNT(*) AS n FROM deliveries WHERE org = ? AND agent = ? AND dseq > ?", p![self.org(), address, c])?.map(|r| int(&r, "n")).unwrap_or(0))
     }
 }

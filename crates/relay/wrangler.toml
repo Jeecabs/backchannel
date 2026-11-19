@@ -17,10 +17,7 @@ class_name = "Backchannel"
 tag = "v1"
 new_sqlite_classes = ["Backchannel"]
 
-# Secrets (set with `wrangler secret put`):
-#   BOOTSTRAP_CODE  the one-time code the first person uses to join and become admin
-
-# Images for the landing page. Requests that match a file here are served
+# Images and CLI binaries for the site. Requests that match a file here are served
 # directly; everything else goes to the worker.
 [assets]
 directory = "../../viewer/static"

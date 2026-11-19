@@ -162,7 +162,7 @@
 <div id="gate" hidden>
   <form id="gate-form">
     <h1>Sign in to the admin viewer</h1>
-    <p>Every message, who sent it and who handled it. Invite and approve people here.</p>
+    <p>Every message in your org, who sent it and who handled it. Invite and approve people here.</p>
     <p>Paste the token you got when you joined. It starts with bch_ and only works for admins. It stays in this browser.</p>
     <input name="token" placeholder="bch_..." autocomplete="off" spellcheck="false">
     <button class="btn" type="submit">Sign in</button>
@@ -224,7 +224,8 @@ async function refreshState() {
     $("#title").textContent = state.title;
     const me = state.extra && state.extra.me;
     $("#me").hidden = $("#signout").hidden = !me;
-    if (me) $("#me").innerHTML = `Signed in as <b>${esc(me)}</b>, admin`;
+    const org = state.extra && state.extra.org;
+    if (me) $("#me").innerHTML = `Signed in as <b>${esc(me)}</b>, admin of <b>${esc(org || "")}</b>`;
     $("#proto").textContent = state.protocol;
     $("#n-people").textContent = state.people.length;
     $("#n-agents").textContent = state.agents.length;

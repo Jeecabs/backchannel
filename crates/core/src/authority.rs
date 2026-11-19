@@ -15,30 +15,36 @@ use crate::types::*;
 
 pub const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS identities (
-  name TEXT PRIMARY KEY,
+  org TEXT NOT NULL,
+  name TEXT NOT NULL,
   key TEXT NOT NULL,
   kind TEXT NOT NULL DEFAULT 'person',
   display_name TEXT NOT NULL DEFAULT '',
   bio TEXT NOT NULL DEFAULT '',
   owner TEXT,
   created_at INTEGER NOT NULL,
-  last_seen INTEGER NOT NULL
+  last_seen INTEGER NOT NULL,
+  PRIMARY KEY (org, name)
 );
 CREATE TABLE IF NOT EXISTS boards (
-  name TEXT PRIMARY KEY,
+  org TEXT NOT NULL,
+  name TEXT NOT NULL,
   description TEXT NOT NULL DEFAULT '',
   visibility TEXT NOT NULL DEFAULT 'public',
   created_by TEXT NOT NULL,
-  created_at INTEGER NOT NULL
+  created_at INTEGER NOT NULL,
+  PRIMARY KEY (org, name)
 );
 CREATE TABLE IF NOT EXISTS board_members (
+  org TEXT NOT NULL,
   board TEXT NOT NULL,
   name TEXT NOT NULL,
-  PRIMARY KEY (board, name)
+  PRIMARY KEY (org, board, name)
 );
 CREATE TABLE IF NOT EXISTS posts (
   gseq INTEGER PRIMARY KEY,
-  id TEXT NOT NULL UNIQUE,
+  org TEXT NOT NULL,
+  id TEXT NOT NULL,
   board TEXT NOT NULL,
   seq INTEGER NOT NULL,
   author TEXT NOT NULL,
@@ -49,20 +55,27 @@ CREATE TABLE IF NOT EXISTS posts (
   expires_at INTEGER,
   received_at INTEGER NOT NULL,
   retracted INTEGER NOT NULL DEFAULT 0,
-  envelope TEXT NOT NULL
+  envelope TEXT NOT NULL,
+  UNIQUE (org, id)
 );
-CREATE INDEX IF NOT EXISTS posts_board_seq ON posts (board, seq);
-CREATE INDEX IF NOT EXISTS posts_thread ON posts (thread);
-CREATE INDEX IF NOT EXISTS posts_author_time ON posts (author, received_at);
+CREATE INDEX IF NOT EXISTS posts_org_gseq ON posts (org, gseq);
+CREATE INDEX IF NOT EXISTS posts_org_board_seq ON posts (org, board, seq);
+CREATE INDEX IF NOT EXISTS posts_org_thread ON posts (org, thread);
+CREATE INDEX IF NOT EXISTS posts_org_author_time ON posts (org, author, received_at);
 CREATE TABLE IF NOT EXISTS handling (
-  post TEXT PRIMARY KEY,
+  org TEXT NOT NULL,
+  post TEXT NOT NULL,
   state TEXT NOT NULL,
   holder TEXT,
   lease_until INTEGER,
   handled_by TEXT,
   handled_at INTEGER,
-  updated_at INTEGER NOT NULL
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY (org, post)
 )";
+
+/// The org of an authority nobody configured: a single-tenant local node.
+pub const DEFAULT_ORG: &str = "local";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mode {
@@ -109,6 +122,10 @@ pub struct Authority<S: Sql> {
     /// Anyone with a valid key may claim an unused name by posting.
     /// Relays turn this off and register people through signup instead.
     pub open_registration: bool,
+    /// The tenant this authority serves. Several orgs can share one database:
+    /// every row carries its org and every statement here is scoped to it.
+    /// Set it right after constructing; defaults to "local".
+    pub org: String,
 }
 
 impl<S: Sql> Authority<S> {
@@ -120,7 +137,7 @@ impl<S: Sql> Authority<S> {
 
     /// For storage whose schema is already set up.
     pub fn attach(sql: S, mode: Mode, clock: impl Fn() -> i64 + 'static) -> Self {
-        Authority { sql, mode, clock: Box::new(clock), open_registration: true }
+        Authority { sql, mode, clock: Box::new(clock), open_registration: true, org: DEFAULT_ORG.to_string() }
     }
 
     pub fn now(&self) -> i64 {
@@ -139,20 +156,20 @@ impl<S: Sql> Authority<S> {
         let bio = clip(profile.bio, limits::BIO);
         tx(&self.sql, || {
             let now = self.now();
-            match self.sql.one("SELECT key FROM identities WHERE name = ?", p![name])? {
+            match self.sql.one("SELECT key FROM identities WHERE org = ? AND name = ?", p![&self.org, name])? {
                 Some(r) if text(&r, "key") != key => {
                     return err(Code::Conflict, format!("the name \"{name}\" is taken"));
                 }
                 Some(_) => {
                     self.sql.run(
-                        "UPDATE identities SET display_name = COALESCE(?, display_name), bio = COALESCE(?, bio), last_seen = ? WHERE name = ?",
-                        p![display.clone(), bio.clone(), now, name],
+                        "UPDATE identities SET display_name = COALESCE(?, display_name), bio = COALESCE(?, bio), last_seen = ? WHERE org = ? AND name = ?",
+                        p![display.clone(), bio.clone(), now, &self.org, name],
                     )?;
                 }
                 None => {
                     self.sql.run(
-                        "INSERT INTO identities (name, key, kind, display_name, bio, owner, created_at, last_seen) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                        p![name, key, profile.kind.unwrap_or_else(|| "person".into()), display.unwrap_or_default(), bio.unwrap_or_default(), profile.owner, now, now],
+                        "INSERT INTO identities (org, name, key, kind, display_name, bio, owner, created_at, last_seen) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        p![&self.org, name, key, profile.kind.unwrap_or_else(|| "person".into()), display.unwrap_or_default(), bio.unwrap_or_default(), profile.owner, now, now],
                     )?;
                 }
             }
@@ -161,20 +178,20 @@ impl<S: Sql> Authority<S> {
     }
 
     pub fn identity(&self, name: &str) -> Result<Option<Identity>> {
-        Ok(self.sql.one("SELECT * FROM identities WHERE name = ?", p![name])?.map(|r| to_identity(&r)))
+        Ok(self.sql.one("SELECT * FROM identities WHERE org = ? AND name = ?", p![&self.org, name])?.map(|r| to_identity(&r)))
     }
 
     pub fn identities(&self) -> Result<Vec<Identity>> {
-        Ok(self.sql.query("SELECT * FROM identities ORDER BY last_seen DESC", &[])?.iter().map(to_identity).collect())
+        Ok(self.sql.query("SELECT * FROM identities WHERE org = ? ORDER BY last_seen DESC", p![&self.org])?.iter().map(to_identity).collect())
     }
 
     pub fn touch(&self, name: &str) -> Result<()> {
-        self.sql.run("UPDATE identities SET last_seen = ? WHERE name = ?", p![self.now(), name])
+        self.sql.run("UPDATE identities SET last_seen = ? WHERE org = ? AND name = ?", p![self.now(), &self.org, name])
     }
 
     /// Fails unless `key` is the key bound to `name`.
     pub fn assert_key(&self, name: &str, key: &str) -> Result<()> {
-        match self.sql.one("SELECT key FROM identities WHERE name = ?", p![name])? {
+        match self.sql.one("SELECT key FROM identities WHERE org = ? AND name = ?", p![&self.org, name])? {
             None => err(Code::Unauthorized, format!("unknown identity \"{name}\"")),
             Some(r) if text(&r, "key") != key => err(Code::Unauthorized, format!("key does not match the one bound to \"{name}\"")),
             Some(_) => Ok(()),
@@ -198,18 +215,18 @@ impl<S: Sql> Authority<S> {
             }
         }
         tx(&self.sql, || {
-            if self.sql.one("SELECT 1 AS x FROM boards WHERE name = ?", p![&spec.name])?.is_some() {
+            if self.sql.one("SELECT 1 AS x FROM boards WHERE org = ? AND name = ?", p![&self.org, &spec.name])?.is_some() {
                 return err(Code::Conflict, format!("board \"{}\" already exists", spec.name));
             }
             let description: String = spec.description.clone().unwrap_or_default().chars().take(limits::DESCRIPTION).collect();
             let vis = if visibility == Visibility::Private { "private" } else { "public" };
             self.sql.run(
-                "INSERT INTO boards (name, description, visibility, created_by, created_at) VALUES (?, ?, ?, ?, ?)",
-                p![&spec.name, description, vis, by, self.now()],
+                "INSERT INTO boards (org, name, description, visibility, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                p![&self.org, &spec.name, description, vis, by, self.now()],
             )?;
             if visibility == Visibility::Private {
                 for m in &members {
-                    self.sql.run("INSERT OR IGNORE INTO board_members (board, name) VALUES (?, ?)", p![&spec.name, m])?;
+                    self.sql.run("INSERT OR IGNORE INTO board_members (org, board, name) VALUES (?, ?, ?)", p![&self.org, &spec.name, m])?;
                 }
             }
             Ok(self.board(&spec.name)?.expect("just written"))
@@ -218,23 +235,23 @@ impl<S: Sql> Authority<S> {
 
     /// Creates the board if it does not exist yet. Used for well-known boards.
     pub fn ensure_board(&self, name: &str, description: &str) -> Result<()> {
-        if self.sql.one("SELECT 1 AS x FROM boards WHERE name = ?", p![name])?.is_none() {
+        if self.sql.one("SELECT 1 AS x FROM boards WHERE org = ? AND name = ?", p![&self.org, name])?.is_none() {
             self.sql.run(
-                "INSERT OR IGNORE INTO boards (name, description, visibility, created_by, created_at) VALUES (?, ?, 'public', 'backchannel', ?)",
-                p![name, description, self.now()],
+                "INSERT OR IGNORE INTO boards (org, name, description, visibility, created_by, created_at) VALUES (?, ?, ?, 'public', 'backchannel', ?)",
+                p![&self.org, name, description, self.now()],
             )?;
         }
         Ok(())
     }
 
     fn board_head(&self, name: &str) -> Result<i64> {
-        Ok(self.sql.one("SELECT MAX(seq) AS h FROM posts WHERE board = ?", p![name])?.map(|r| int(&r, "h")).unwrap_or(0))
+        Ok(self.sql.one("SELECT MAX(seq) AS h FROM posts WHERE org = ? AND board = ?", p![&self.org, name])?.map(|r| int(&r, "h")).unwrap_or(0))
     }
 
     pub fn board(&self, name: &str) -> Result<Option<Board>> {
         let head = self.board_head(name)?;
         if let Some(owner) = dm_owner(name) {
-            let Some(id) = self.sql.one("SELECT created_at FROM identities WHERE name = ?", p![owner])? else { return Ok(None) };
+            let Some(id) = self.sql.one("SELECT created_at FROM identities WHERE org = ? AND name = ?", p![&self.org, owner])? else { return Ok(None) };
             return Ok(Some(Board {
                 name: name.to_string(),
                 description: format!("Direct messages to {owner}"),
@@ -245,10 +262,10 @@ impl<S: Sql> Authority<S> {
                 members: None,
             }));
         }
-        let Some(r) = self.sql.one("SELECT * FROM boards WHERE name = ?", p![name])? else { return Ok(None) };
+        let Some(r) = self.sql.one("SELECT * FROM boards WHERE org = ? AND name = ?", p![&self.org, name])? else { return Ok(None) };
         let visibility = if text(&r, "visibility") == "private" { Visibility::Private } else { Visibility::Public };
         let members = if visibility == Visibility::Private {
-            Some(self.sql.query("SELECT name FROM board_members WHERE board = ? ORDER BY name", p![name])?.iter().map(|m| text(m, "name")).collect())
+            Some(self.sql.query("SELECT name FROM board_members WHERE org = ? AND board = ? ORDER BY name", p![&self.org, name])?.iter().map(|m| text(m, "name")).collect())
         } else {
             None
         };
@@ -268,17 +285,17 @@ impl<S: Sql> Authority<S> {
         let mut names: Vec<String> = self
             .sql
             .query(
-                "SELECT name FROM boards b WHERE ? IS NULL OR b.visibility = 'public'
-                   OR EXISTS (SELECT 1 FROM board_members m WHERE m.board = b.name AND m.name = ?)
+                "SELECT name FROM boards b WHERE b.org = ? AND (? IS NULL OR b.visibility = 'public'
+                   OR EXISTS (SELECT 1 FROM board_members m WHERE m.org = b.org AND m.board = b.name AND m.name = ?))
                  ORDER BY name",
-                p![viewer, viewer],
+                p![&self.org, viewer, viewer],
             )?
             .iter()
             .map(|r| text(r, "name"))
             .collect();
         match viewer {
             Some(v) => names.push(format!("@{v}")),
-            None => names.extend(self.sql.query("SELECT DISTINCT board FROM posts WHERE substr(board, 1, 1) = '@'", &[])?.iter().map(|r| text(r, "board"))),
+            None => names.extend(self.sql.query("SELECT DISTINCT board FROM posts WHERE org = ? AND substr(board, 1, 1) = '@'", p![&self.org])?.iter().map(|r| text(r, "board"))),
         }
         names.dedup();
         let mut out = Vec::new();
@@ -295,11 +312,11 @@ impl<S: Sql> Authority<S> {
         if let Some(owner) = dm_owner(board) {
             return Ok(owner == viewer || author == Some(viewer));
         }
-        let Some(b) = self.sql.one("SELECT visibility FROM boards WHERE name = ?", p![board])? else { return Ok(false) };
+        let Some(b) = self.sql.one("SELECT visibility FROM boards WHERE org = ? AND name = ?", p![&self.org, board])? else { return Ok(false) };
         if text(&b, "visibility") == "public" {
             return Ok(true);
         }
-        Ok(self.sql.one("SELECT 1 AS x FROM board_members WHERE board = ? AND name = ?", p![board, viewer])?.is_some())
+        Ok(self.sql.one("SELECT 1 AS x FROM board_members WHERE org = ? AND board = ? AND name = ?", p![&self.org, board, viewer])?.is_some())
     }
 
     pub fn can_write(&self, name: &str, board: &str) -> Result<bool> {
@@ -320,7 +337,7 @@ impl<S: Sql> Authority<S> {
         }
         tx(&self.sql, || {
             let now = self.now();
-            if let Some(prior) = self.sql.one("SELECT * FROM posts WHERE id = ?", p![&env.id])? {
+            if let Some(prior) = self.sql.one("SELECT * FROM posts WHERE org = ? AND id = ?", p![&self.org, &env.id])? {
                 let stored = to_stored(&prior)?;
                 // A retry of a post we already have: safe to repeat at any time.
                 if stored.envelope.sig == env.sig {
@@ -334,7 +351,7 @@ impl<S: Sql> Authority<S> {
             }
 
             let author = env.from.name.as_str();
-            match self.sql.one("SELECT key FROM identities WHERE name = ?", p![author])? {
+            match self.sql.one("SELECT key FROM identities WHERE org = ? AND name = ?", p![&self.org, author])? {
                 None if !self.open_registration => {
                     return err(Code::Forbidden, format!("\"{author}\" has not joined this relay"));
                 }
@@ -350,21 +367,21 @@ impl<S: Sql> Authority<S> {
             if self.board(&env.board)?.is_none() {
                 let stem: String = env.board.split('/').next().unwrap_or("").chars().take(3).collect();
                 let suggestions: Vec<String> =
-                    self.sql.query("SELECT name FROM boards WHERE name LIKE ? LIMIT 5", p![format!("%{stem}%")])?.iter().map(|r| text(r, "name")).collect();
+                    self.sql.query("SELECT name FROM boards WHERE org = ? AND name LIKE ? LIMIT 5", p![&self.org, format!("%{stem}%")])?.iter().map(|r| text(r, "name")).collect();
                 return Err(Error::new(Code::NotFound, format!("board \"{}\" does not exist", env.board)).with(json!({ "suggestions": suggestions })));
             }
             if !self.can_write(author, &env.board)? {
                 return err(Code::Forbidden, format!("you are not a member of \"{}\"", env.board));
             }
 
-            let recent = self.sql.one("SELECT COUNT(*) AS n FROM posts WHERE author = ? AND received_at > ?", p![author, now - 60_000])?;
+            let recent = self.sql.one("SELECT COUNT(*) AS n FROM posts WHERE org = ? AND author = ? AND received_at > ?", p![&self.org, author, now - 60_000])?;
             if recent.map(|r| int(&r, "n")).unwrap_or(0) >= limits::POSTS_PER_MINUTE {
                 return Err(Error::new(Code::RateLimited, "too many posts; slow down").with(json!({ "retry_after": 60 })));
             }
 
             let target = match &env.ref_ {
                 Some(r) => {
-                    let Some(t) = self.sql.one("SELECT * FROM posts WHERE id = ?", p![r])? else {
+                    let Some(t) = self.sql.one("SELECT * FROM posts WHERE org = ? AND id = ?", p![&self.org, r])? else {
                         return err(Code::NotFound, format!("ref {r} does not exist"));
                     };
                     if text(&t, "board") != env.board {
@@ -379,16 +396,19 @@ impl<S: Sql> Authority<S> {
             }
 
             let seq = self.board_head(&env.board)? + 1;
-            let gseq = self.head()? + 1;
-            let stored = StoredPost {
+            let mut stored = StoredPost {
                 thread: target.as_ref().map(|t| text(t, "thread")).unwrap_or_else(|| env.id.clone()),
                 envelope: env.clone(),
                 seq,
-                gseq,
+                gseq: 0,
                 received_at: iso(now),
                 retracted: false,
             };
-            self.insert(&stored)?;
+            // gseq orders every org's posts in one sequence. The database hands out
+            // the next one, so no org ever has to look at another org's rows.
+            self.insert(&stored, None)?;
+            let row = self.sql.one("SELECT gseq FROM posts WHERE org = ? AND id = ?", p![&self.org, &env.id])?;
+            stored.gseq = row.map(|r| int(&r, "gseq")).unwrap_or(0);
             self.touch(author)?;
             Ok(stored)
         })
@@ -402,28 +422,31 @@ impl<S: Sql> Authority<S> {
             return Ok(Ingest::Rejected);
         }
         tx(&self.sql, || {
-            if self.sql.one("SELECT 1 AS x FROM posts WHERE id = ?", p![&post.envelope.id])?.is_some() {
+            if self.sql.one("SELECT 1 AS x FROM posts WHERE org = ? AND id = ?", p![&self.org, &post.envelope.id])?.is_some() {
                 return Ok(Ingest::Duplicate);
             }
             let from = &post.envelope.from;
             let at = parse_iso(&post.received_at).unwrap_or(0);
-            match self.sql.one("SELECT key FROM identities WHERE name = ?", p![&from.name])? {
+            match self.sql.one("SELECT key FROM identities WHERE org = ? AND name = ?", p![&self.org, &from.name])? {
                 Some(r) if text(&r, "key") != from.key => return Ok(Ingest::Rejected),
-                Some(_) => self.sql.run("UPDATE identities SET last_seen = MAX(last_seen, ?) WHERE name = ?", p![at, &from.name])?,
-                None => self.sql.run("INSERT INTO identities (name, key, created_at, last_seen) VALUES (?, ?, ?, ?)", p![&from.name, &from.key, at, at])?,
+                Some(_) => self.sql.run("UPDATE identities SET last_seen = MAX(last_seen, ?) WHERE org = ? AND name = ?", p![at, &self.org, &from.name])?,
+                None => self.sql.run("INSERT INTO identities (org, name, key, created_at, last_seen) VALUES (?, ?, ?, ?, ?)", p![&self.org, &from.name, &from.key, at, at])?,
             }
-            self.insert(post)?;
+            self.insert(post, Some(post.gseq))?;
             Ok(Ingest::Stored)
         })
     }
 
-    fn insert(&self, p: &StoredPost) -> Result<()> {
+    /// `gseq` is `None` when this authority orders the post itself, and the
+    /// upstream authority's number when a replica stores what it was given.
+    fn insert(&self, p: &StoredPost, gseq: Option<i64>) -> Result<()> {
         let e = &p.envelope;
         self.sql.run(
-            "INSERT INTO posts (gseq, id, board, seq, author, agent, kind, ref, thread, expires_at, received_at, retracted, envelope)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)",
+            "INSERT INTO posts (org, gseq, id, board, seq, author, agent, kind, ref, thread, expires_at, received_at, retracted, envelope)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)",
             p![
-                p.gseq,
+                &self.org,
+                gseq,
                 &e.id,
                 &e.board,
                 p.seq,
@@ -448,10 +471,10 @@ impl<S: Sql> Authority<S> {
         let Some(target) = e.ref_.as_deref() else { return Ok(()) };
         let upsert = |state: &str, holder: Val, lease: Val, by: Val, by_at: Val| {
             self.sql.run(
-                "INSERT INTO handling (post, state, holder, lease_until, handled_by, handled_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)
-                 ON CONFLICT(post) DO UPDATE SET state = excluded.state, holder = excluded.holder, lease_until = excluded.lease_until,
+                "INSERT INTO handling (org, post, state, holder, lease_until, handled_by, handled_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                 ON CONFLICT(org, post) DO UPDATE SET state = excluded.state, holder = excluded.holder, lease_until = excluded.lease_until,
                    handled_by = excluded.handled_by, handled_at = excluded.handled_at, updated_at = excluded.updated_at",
-                &[target.into(), state.into(), holder, lease, by, by_at, at.into()],
+                &[(&self.org).into(), target.into(), state.into(), holder, lease, by, by_at, at.into()],
             )
         };
         match e.kind {
@@ -461,7 +484,7 @@ impl<S: Sql> Authority<S> {
             }
             Kind::Release => upsert("open", Val::Null, Val::Null, Val::Null, Val::Null),
             Kind::Handled => upsert("handled", Val::Null, Val::Null, me.into(), at.into()),
-            Kind::Retract => self.sql.run("UPDATE posts SET retracted = 1 WHERE id = ?", p![target]),
+            Kind::Retract => self.sql.run("UPDATE posts SET retracted = 1 WHERE org = ? AND id = ?", p![&self.org, target]),
             _ => Ok(()),
         }
     }
@@ -519,7 +542,7 @@ impl<S: Sql> Authority<S> {
     }
 
     fn handling_at(&self, post: &str, now: i64) -> Result<Handling> {
-        let Some(r) = self.sql.one("SELECT * FROM handling WHERE post = ?", p![post])? else {
+        let Some(r) = self.sql.one("SELECT * FROM handling WHERE org = ? AND post = ?", p![&self.org, post])? else {
             return Ok(Handling { post: post.into(), state: HandlingState::Open, holder: None, lease_until: None, handled_by: None, handled_at: None, updated_at: iso(0) });
         };
         let lease = opt_int(&r, "lease_until");
@@ -542,13 +565,16 @@ impl<S: Sql> Authority<S> {
 
     // ---- reads -------------------------------------------------------------
 
+    /// The visibility clause for posts aliased `p`. Its subqueries tie boards and
+    /// members to the post's own org, and `select` pins that org, so the clause
+    /// needs no org parameter of its own.
     fn visible(&self, viewer: Option<&str>, include_expired: bool) -> (String, Vec<Val>) {
         let mut params: Vec<Val> = Vec::new();
         let mut clause = String::from("1 = 1");
         if let Some(v) = viewer {
             clause = "((substr(p.board, 1, 1) = '@' AND (p.board = '@' || ? OR p.author = ?))
-              OR EXISTS (SELECT 1 FROM boards b WHERE b.name = p.board AND (b.visibility = 'public'
-                OR EXISTS (SELECT 1 FROM board_members m WHERE m.board = b.name AND m.name = ?))))"
+              OR EXISTS (SELECT 1 FROM boards b WHERE b.org = p.org AND b.name = p.board AND (b.visibility = 'public'
+                OR EXISTS (SELECT 1 FROM board_members m WHERE m.org = b.org AND m.board = b.name AND m.name = ?))))"
                 .into();
             params.extend([v.into(), v.into(), v.into()]);
         }
@@ -561,11 +587,13 @@ impl<S: Sql> Authority<S> {
 
     fn select(&self, where_: &str, leading: Vec<Val>, viewer: Option<&str>, include_expired: bool, order_limit: &str, limit: i64) -> Result<Vec<StoredPost>> {
         let (vis, vparams) = self.visible(viewer, include_expired);
-        let mut params = leading;
+        // Parameter order follows the text: the org, then `where_`, then visibility, then the limit.
+        let mut params: Vec<Val> = vec![(&self.org).into()];
+        params.extend(leading);
         params.extend(vparams);
         params.push(limit.clamp(1, limits::FEED_PAGE).into());
         self.sql
-            .query(&format!("SELECT p.* FROM posts p WHERE {where_} AND {vis} {order_limit}"), &params)?
+            .query(&format!("SELECT p.* FROM posts p WHERE p.org = ? AND {where_} AND {vis} {order_limit}"), &params)?
             .iter()
             .map(to_stored)
             .collect()
@@ -599,13 +627,13 @@ impl<S: Sql> Authority<S> {
     }
 
     pub fn post(&self, id: &str) -> Result<Option<StoredPost>> {
-        self.sql.one("SELECT * FROM posts WHERE id = ?", p![id])?.map(|r| to_stored(&r)).transpose()
+        self.sql.one("SELECT * FROM posts WHERE org = ? AND id = ?", p![&self.org, id])?.map(|r| to_stored(&r)).transpose()
     }
 
     /// Asks and tasks nobody has handled yet, newest first.
     pub fn open_items(&self, viewer: Option<&str>, limit: i64) -> Result<Vec<(StoredPost, Handling)>> {
         let posts = self.select(
-            "p.kind IN ('ask', 'task') AND p.retracted = 0 AND NOT EXISTS (SELECT 1 FROM handling h WHERE h.post = p.id AND h.state = 'handled')",
+            "p.kind IN ('ask', 'task') AND p.retracted = 0 AND NOT EXISTS (SELECT 1 FROM handling h WHERE h.org = p.org AND h.post = p.id AND h.state = 'handled')",
             vec![],
             viewer,
             false,
@@ -615,8 +643,10 @@ impl<S: Sql> Authority<S> {
         posts.into_iter().map(|p| self.handling(&p.envelope.id).map(|h| (p, h))).collect()
     }
 
+    /// The gseq of this org's newest post. gseq is shared by every org in the
+    /// database, so within one org it only ever grows but may skip numbers.
     pub fn head(&self) -> Result<i64> {
-        Ok(self.sql.one("SELECT MAX(gseq) AS h FROM posts", &[])?.map(|r| int(&r, "h")).unwrap_or(0))
+        Ok(self.sql.one("SELECT MAX(gseq) AS h FROM posts WHERE org = ?", p![&self.org])?.map(|r| int(&r, "h")).unwrap_or(0))
     }
 }
 
