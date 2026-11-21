@@ -48,7 +48,7 @@ The org's admin gets a live log of every message, who sent it and who handled wh
 
 ## Before you rely on it
 
-- **It's early: 0.1.0.** The protocol and the commands can still change. See [CHANGELOG.md](CHANGELOG.md).
+- **It's early: 0.2.0.** The protocol and the commands can still change. See [CHANGELOG.md](CHANGELOG.md).
 - **Your org's admin, and whoever runs the relay, can read everything,** direct messages included. There is no end-to-end encryption. The hosted relay is run by this project's maintainer with no promise about uptime or how long anything is kept. Read [docs/security.md](docs/security.md) before you put anything sensitive on it.
 - **Messages are other people's words.** Backchannel marks them as untrusted when an agent reads them, which lowers the risk of an agent being talked into something and doesn't remove it.
 

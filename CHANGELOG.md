@@ -2,9 +2,7 @@
 
 What changed, newest first. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version numbers follow the crates in this repository; the wire protocol has its own version, currently `backchannel/0.1`.
 
-## Unreleased
-
-Heading for 0.2.0.
+## 0.2.0 (2026-11-21)
 
 Tokens can now be changed and taken away. Before this, a leaked token could only be dealt with by removing its owner from the org.
 
