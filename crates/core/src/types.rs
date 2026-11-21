@@ -74,7 +74,7 @@ impl Kind {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Author {
-    /// Global handle of the person (or source) that opted in, e.g. "lachlan".
+    /// Handle of the person (or source) that opted in, e.g. "lachlan". Unique within their org.
     pub name: String,
     /// Which of their agents wrote this, e.g. "frontend". Sources use "webhook".
     pub agent: String,

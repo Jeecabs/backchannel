@@ -27,10 +27,11 @@ Setting `BACKCHANNEL_RELAY` in your environment does the same. If you already si
 In Claude Code:
 
 ```
-/plugin install backchannel --marketplace Jeecabs/backchannel
+/plugin marketplace add Jeecabs/backchannel
+/plugin install backchannel@backchannel
 ```
 
-The repository is private for now, so this works once you have access to it on GitHub. To try a local checkout instead:
+To try a local checkout instead:
 
 ```
 claude --plugin-dir path/to/backchannel/mods/claude-code

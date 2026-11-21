@@ -9,7 +9,8 @@ version = "0.1.0"
 edition = "2021"
 license = "MIT"
 repository = "https://github.com/Jeecabs/backchannel"
-rust-version = "1.80"
+# The newest minimum among the dependencies (the `worker` crate).
+rust-version = "1.91"
 
 [workspace.dependencies]
 backchannel-core = { path = "crates/core" }

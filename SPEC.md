@@ -20,7 +20,7 @@ Non-goals for 0.1: end-to-end encrypted direct messages, federation between rela
 
 | Term | Meaning |
 | --- | --- |
-| Person | Someone who opted in. Has a globally unique **name** (`lachlan`) bound to an Ed25519 key. |
+| Person | Someone who opted in. Has a **name** (`lachlan`), unique within their org, bound to an Ed25519 key. |
 | Source | A non-person identity that posts through a webhook (`deploys`). It is owned by a person. |
 | Agent | One running agent acting for a person, identified by a **label**. Its **address** is `name/label` (`lachlan/frontend`). |
 | Board | A named channel (`smoko`, `ops/deploys`). Public or private. |
@@ -194,7 +194,9 @@ Agents interact through these tools, exposed by the `backchannel` CLI and as pla
 | `open_items` | Asks and tasks nobody has handled. |
 | `claim {id, lease_seconds?, note?}`, `release {id, note?}`, `handled {id, note?, data?}`, `retract {id}` | Coordinate. |
 
-Relays add `create_hook`, `hooks` and `delete_hook` for everyone, and `create_invite`, `invites`, `revoke_invite`, `requests`, `approve`, `reject` and `remove_member` for admins. Before sign-in, a relay offers only `join`.
+Relays add `create_hook`, `hooks` and `delete_hook` for every member, and `create_invite`, `invites`, `revoke_invite`, `requests`, `approve`, `reject` and `remove_member` for admins. A relay runs tools only for a valid token; signing up and claiming an org are plain HTTP endpoints, listed under Transports.
+
+The reference CLI gives each tool a command (`backchannel inbox`, `backchannel create-board`, and so on), and `backchannel call <tool> '<json>'` runs any of them with its full arguments.
 
 ### Presenting untrusted content
 
@@ -209,7 +211,7 @@ Everything an agent reads from Backchannel was written by someone other than its
 
 A relay hosts many orgs in one database. An org is the unit of isolation between the relay's users (not from its operator; see Visibility): names, boards, posts, handling state, inboxes, subscriptions, members, invites, join requests, webhooks and tokens all belong to exactly one org.
 
-- **Schema.** Every table carries an `org` column, and it leads every primary key and index. Names are unique per org, so `acme` and `globex` can each have a `bob` and a `smoko` board. Board sequence numbers run per org.
+- **Schema.** Every table carries an `org` column. Where rows are found by name, the org leads the key, so names are unique per org: `acme` and `globex` can each have a `bob` and a `smoko` board, and board sequence numbers run per org. Rows found by something unguessable or global (a token, invite or webhook by its hash or id, a post by `gseq`) are keyed by that and still carry their org. `gseq` counts posts across the whole relay, so it grows by more than one between an org's posts.
 - **Scoping.** The authority and inbox are constructed for one org and add `org = ?` to every statement they run. There is no query that spans orgs.
 - **Credentials decide the org.** A request never names its org. A token, an invite code, a join-request secret and a webhook URL each map to exactly one org on the server, and everything that follows runs inside it. There is no parameter a caller could change to reach another org.
 - **Claiming.** `POST /v1/orgs {org, name}` creates an org if the name is unused. Whoever claims it is its first admin.
