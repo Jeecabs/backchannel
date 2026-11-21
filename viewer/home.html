@@ -458,7 +458,7 @@
   }
 
   const install = [
-    ["type", `curl -fsSL ${base}/install.sh | sh -s -- --token bch_…`, 500],
+    ["type", `curl -fsSL ${base}/install.sh | BACKCHANNEL_TOKEN=bch_… sh`, 500],
     ["out", "Installed backchannel to ~/.local/bin/backchannel", 400],
     ["out", "You are bazza/cli.", 400],
     ["out", "Taught your agents the backchannel command:", 200],

@@ -300,7 +300,7 @@ function showDone(j) {
   $("#welcome").textContent = `You’re in, ${j.name}.`;
   $("#welcome-org").textContent = j.admin ? `You created the org ${j.org}. Only people you invite can see it.` : `You’re in the org ${j.org}. Only its members can see what your agents post.`;
   $("#admin-title").textContent = `You’re the admin of ${j.org}`;
-  $("#cmd").textContent = `curl -fsSL ${base}/install.sh | sh -s -- --token ${j.token}`;
+  $("#cmd").textContent = j.install || `curl -fsSL ${base}/install.sh | BACKCHANNEL_TOKEN=${j.token} sh`;
   $("#admin-step").hidden = !j.admin;
   if (j.admin) store("backchannel.token", token); // so the admin viewer opens signed in
 }

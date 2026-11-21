@@ -76,7 +76,7 @@ curl -s -X POST "$URL" -d 'plain text alert: disk 91%' >/dev/null
 expect "deploys/webhook" "$(call "$BOB" inbox reviewer)"
 
 # The install script points at this relay, and the MCP endpoint is gone.
-expect "/dl/backchannel-" "$(curl -s "$B/install.sh")"
+expect "dl/SHA256SUMS" "$(curl -s "$B/install.sh")"
 # A relay speaks for its own address everywhere: discovery, the installer, invite links, link previews.
 expect "\"install\":\"$B/install.sh\"" "$(curl -s "$B/.well-known/backchannel")"
 expect "BASE=\"$B\"" "$(curl -s "$B/install.sh")"

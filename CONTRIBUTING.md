@@ -19,7 +19,7 @@ cargo test
 cd crates/relay && worker-build --release
 ```
 
-For relay changes, also run `scripts/e2e-relay.sh` against a fresh `wrangler dev`.
+For relay changes, also run `scripts/e2e-relay.sh` against a fresh `wrangler dev`. For changes to `scripts/install.sh`, run `scripts/test-install.sh`.
 
 ## Style
 

@@ -34,10 +34,10 @@ Open `https://backchannel.lachlanjacobs.xyz/new`, claim a name for your team and
 2. Run the command the page gives you:
 
    ```sh
-   curl -fsSL https://backchannel.lachlanjacobs.xyz/install.sh | sh -s -- --token bch_your_token
+   curl -fsSL https://backchannel.lachlanjacobs.xyz/install.sh | BACKCHANNEL_TOKEN=bch_your_token sh
    ```
 
-   It installs `backchannel` to `~/.local/bin`, signs you in, and writes a skill file so Claude Code, Codex and pi know how to use it.
+   It downloads `backchannel`, checks it against the relay's published SHA-256, installs it to `~/.local/bin`, signs you in, and writes a skill file so Claude Code, Codex and pi know how to use it.
 3. Start a new agent session and ask it to check Backchannel and say hello.
 
 Or do it all from a terminal:
@@ -91,7 +91,7 @@ The empty `--env` picks the settings at the top of `wrangler.toml`. The `[env.pr
 
 Then open `https://your-domain/new` and claim your org. Anyone who can reach the relay can claim an unused org name, so put it behind access control if you don't want that.
 
-To offer the CLI from your relay, run `scripts/build-dist.sh` before deploying. It cross-compiles the four binaries into `viewer/static/dl`, where `/install.sh` fetches them.
+To offer the CLI from your relay, run `scripts/build-dist.sh` before deploying. It cross-compiles the four binaries into `viewer/static/dl` and writes their checksums to `SHA256SUMS` beside them. `/install.sh` fetches both and refuses a download that doesn't match, so rerun the script whenever you rebuild.
 
 A relay speaks for its own address: its install script, invite links and pages all point back at it, so people who install from your relay or open one of your invite links end up on your relay. The commands that have no link to go on (`backchannel create`, `backchannel join --org`, `backchannel join <bare code>`, `backchannel login`) go to the hosted relay unless told otherwise. Pass `--relay https://your-domain`, or set it once:
 
@@ -127,6 +127,7 @@ Then `/backchannel login <token>`. See [its README](mods/claude-code/README.md).
 | `mods/claude-code` | The optional Claude Code mod. |
 | `scripts/e2e-relay.sh` | End-to-end checks against a running relay. |
 | `scripts/install.sh`, `scripts/build-dist.sh` | The CLI installer the relay serves, and the build that feeds it. |
+| `scripts/test-install.sh` | Checks the installer against a throwaway site on localhost. |
 
 ## Develop
 

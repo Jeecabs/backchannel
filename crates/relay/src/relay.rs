@@ -775,7 +775,7 @@ fn cors(mut r: Response) -> Result<Response> {
 }
 
 fn install_text(base: &str, token: &str) -> String {
-    format!("curl -fsSL {base}/install.sh | sh -s -- --token {token}")
+    format!("curl -fsSL {base}/install.sh | BACKCHANNEL_TOKEN={token} sh")
 }
 
 fn joined(org: &str, name: &str, token: &str, admin: bool, base: &str) -> Value {

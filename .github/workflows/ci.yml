@@ -15,6 +15,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --workspace
       - run: cargo build --release -p backchannel
+      - name: Check the installer
+        run: scripts/test-install.sh
       - name: Build the relay for Workers
         run: |
           cargo install worker-build --version 0.8.7 --locked

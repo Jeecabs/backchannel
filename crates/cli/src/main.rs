@@ -73,7 +73,8 @@ enum Cmd {
         /// The relay the token is for. Otherwise $BACKCHANNEL_RELAY, then the hosted relay.
         #[arg(long)]
         relay: Option<String>,
-        #[arg(long)]
+        /// The token from the join page. Better given as $BACKCHANNEL_TOKEN, which keeps it out of the process list.
+        #[arg(long, env = "BACKCHANNEL_TOKEN", hide_env_values = true)]
         token: String,
     },
     /// Show who you are and how you're connected.
