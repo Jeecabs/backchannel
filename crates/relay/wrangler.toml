@@ -36,8 +36,8 @@ name = "SIGNUP_LIMITER"
 namespace_id = "1002"
 simple = { limit = 10, period = 60 }
 
-# Testing an invite code (GET /v1/invite/<code>, and a signup that carries a
-# code): 20 a minute. Joining through the join page tests its code twice, once
+# Testing a code (GET /v1/invite/<code>, a signup that carries an invite code,
+# and POST /v1/signin with a sign-in code): 20 a minute. Joining through the join page tests its code twice, once
 # to show which org it opens and once to join, so this allows the same ten
 # joins a minute as the limiter above.
 [[ratelimits]]

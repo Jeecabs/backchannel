@@ -246,6 +246,24 @@ pub fn random_code(n: usize) -> String {
         .collect()
 }
 
+/// Bytes as Crockford base32, five bits to a character, most significant
+/// first. Five bytes make eight characters.
+pub fn crockford(bytes: &[u8]) -> String {
+    let (mut out, mut acc, mut bits) = (String::new(), 0u32, 0u32);
+    for b in bytes {
+        acc = (acc << 8) | u32::from(*b);
+        bits += 8;
+        while bits >= 5 {
+            bits -= 5;
+            out.push(CROCKFORD[((acc >> bits) & 31) as usize] as char);
+        }
+    }
+    if bits > 0 {
+        out.push(CROCKFORD[((acc << (5 - bits)) & 31) as usize] as char);
+    }
+    out
+}
+
 pub fn is_ulid(s: &str) -> bool {
     s.len() == 26 && s.bytes().all(|b| CROCKFORD.contains(&b))
 }
@@ -265,6 +283,16 @@ pub fn parse_iso(s: &str) -> Option<i64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn crockford_encoding() {
+        assert_eq!(crockford(&[0, 0, 0, 0, 0]), "00000000");
+        assert_eq!(crockford(&[0xff; 5]), "ZZZZZZZZ");
+        // 0b00001_00010_00011_00100_00101_00110_00111_01000
+        assert_eq!(crockford(&[0x08, 0x86, 0x42, 0x98, 0xe8]), "12345678");
+        assert_eq!(crockford(&[]), "");
+        assert_eq!(crockford(&[0xff]), "ZW");
+    }
 
     #[test]
     fn random_codes() {

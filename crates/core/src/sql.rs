@@ -82,6 +82,21 @@ pub fn tx<S: Sql + ?Sized, T>(s: &S, f: impl FnOnce() -> Result<T>) -> Result<T>
     }
 }
 
+/// Adds a column to a table that an earlier version created without it. Does
+/// nothing when the column is already there, so it can run at every start.
+/// `table`, `column` and `decl` are our own words, never a caller's.
+pub fn add_column<S: Sql + ?Sized>(s: &S, table: &str, column: &str, decl: &str) -> Result<()> {
+    if s.query(&format!("SELECT {column} FROM {table} LIMIT 0"), &[])
+        .is_ok()
+    {
+        return Ok(());
+    }
+    s.run(
+        &format!("ALTER TABLE {table} ADD COLUMN {column} {decl}"),
+        &[],
+    )
+}
+
 #[macro_export]
 macro_rules! p {
     ($($x:expr),* $(,)?) => { &[$($crate::sql::Val::from($x)),*] };

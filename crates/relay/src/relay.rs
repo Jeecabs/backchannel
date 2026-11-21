@@ -6,8 +6,9 @@ use backchannel_core::crypto::{
 };
 use backchannel_core::inbox::Inbox;
 use backchannel_core::names::{is_agent_label, is_board_name, is_name};
-use backchannel_core::sql::{int, opt_text, text, Sql};
+use backchannel_core::sql::{add_column, int, opt_text, text, Sql};
 use backchannel_core::text::{clean, clean_line, clip};
+use backchannel_core::tokens::{self, Session};
 use backchannel_core::tools::{self, opt_int, opt_str, req_str, Ctx, Me, Outcome};
 use backchannel_core::{
     limits, p, render, view, Author, Code, Envelope, Error, Kind, DEFAULT_BOARD, PROTOCOL,
@@ -37,13 +38,6 @@ CREATE TABLE IF NOT EXISTS members (
   PRIMARY KEY (org, name)
 );
 CREATE TABLE IF NOT EXISTS custody (org TEXT NOT NULL, name TEXT NOT NULL, seed TEXT NOT NULL, PRIMARY KEY (org, name));
-CREATE TABLE IF NOT EXISTS tokens (
-  hash TEXT PRIMARY KEY,
-  org TEXT NOT NULL,
-  name TEXT NOT NULL,
-  created_at INTEGER NOT NULL,
-  last_used INTEGER
-);
 CREATE TABLE IF NOT EXISTS invites (
   hash TEXT PRIMARY KEY,
   org TEXT NOT NULL,
@@ -102,6 +96,36 @@ fn now() -> i64 {
     Date::now().as_millis() as i64
 }
 
+/// How long a webhook's old URL keeps working after its secret is rotated,
+/// unless it is rotated with `now`. Long, because the other end is usually a
+/// setting in somebody's CI that a person has to go and change.
+const HOOK_GRACE_MS: i64 = 24 * 3_600_000;
+
+/// What a member is told when their token is refused. Nothing is kept of a
+/// token that has gone, so rotated, revoked and never-existed all read alike.
+const SIGNED_OUT: &str = "That token doesn't work: it was rotated or revoked, or it never existed. To sign in again, ask your org's admin for a sign-in code (they run `backchannel reset-tokens <your name>`), then run `backchannel signin <code>`.";
+
+fn signed_out() -> Error {
+    Error::new(Code::Unauthorized, SIGNED_OUT)
+}
+
+/// What a tool hands back: text for whoever ran it and, for the tools that
+/// make a token, the token itself. It travels as its own field so that it is
+/// never printed by something that only shows the text.
+struct Reply {
+    text: String,
+    token: Option<String>,
+}
+
+impl Reply {
+    fn text(text: impl Into<String>) -> Reply {
+        Reply {
+            text: text.into(),
+            token: None,
+        }
+    }
+}
+
 fn secret(prefix: &str) -> String {
     format!("{prefix}{}", b64(&random_bytes::<24>()))
 }
@@ -128,6 +152,8 @@ struct Member {
     org: String,
     name: String,
     admin: bool,
+    /// The token this request came with.
+    session: Session,
 }
 
 #[durable_object]
@@ -142,6 +168,12 @@ impl DurableObject for Backchannel {
         let auth = Authority::new(s.sql(), Mode::Authority, now).expect("schema");
         Inbox::new(&auth, true, vec![]).expect("schema");
         auth.sql.batch(SCHEMA).expect("schema");
+        // Tables an earlier version made are brought up to date by adding to
+        // them. Nothing here rewrites or drops a row that is already stored.
+        tokens::migrate(&auth.sql).expect("schema");
+        for (column, decl) in [("old_secret_hash", "TEXT"), ("old_expires_at", "INTEGER")] {
+            add_column(&auth.sql, "hooks", column, decl).expect("schema");
+        }
         s
     }
 
@@ -181,6 +213,15 @@ fn html(body: &str) -> Result<Response> {
         r.headers_mut().set(name, &value)?;
     }
     Ok(r)
+}
+
+/// The program making the request, as it names itself.
+fn client_of(req: &Request) -> String {
+    req.headers()
+        .get("x-backchannel-client")
+        .ok()
+        .flatten()
+        .unwrap_or_else(|| "http".into())
 }
 
 fn bearer(req: &Request) -> Option<String> {
@@ -304,6 +345,15 @@ impl Backchannel {
                     Err(e) => json_error(&e)?,
                 })
             }
+            (Method::Post, ["v1", "signin"]) => cors(
+                match body_json(&mut req, MAX_SIGNUP_BODY)
+                    .await
+                    .and_then(|body| self.sign_in(&body, &base))
+                {
+                    Ok(v) => json_resp(&v, 200)?,
+                    Err(e) => json_error(&e)?,
+                },
+            ),
             (Method::Get, ["v1", "signup", "status"]) => {
                 let q: std::collections::HashMap<String, String> =
                     url.query_pairs().into_owned().collect();
@@ -318,24 +368,23 @@ impl Backchannel {
                     },
                 )
             }
-            (Method::Get, ["v1", "tools"]) => match self.member_for(bearer(&req).as_deref()) {
+            (Method::Get, ["v1", "tools"]) => match self.member_for(&req) {
                 Ok(Some(m)) => json_resp(&json!({ "tools": tool_list(&m) }), 200),
-                Ok(None) => json_error(&Error::new(Code::Unauthorized, "missing or unknown token")),
+                Ok(None) => json_error(&signed_out()),
                 Err(e) => json_error(&e),
             },
             (Method::Get, ["v1", "unread"]) => {
-                let Some(m) = self.member_for(bearer(&req).as_deref()).ok().flatten() else {
-                    return json_error(&Error::new(Code::Unauthorized, "missing or unknown token"));
+                let m = match self.member_for(&req) {
+                    Ok(Some(m)) => m,
+                    Ok(None) => return json_error(&signed_out()),
+                    Err(e) => return json_error(&e),
                 };
                 let label = req
                     .headers()
                     .get("x-backchannel-agent")?
                     .filter(|l| is_agent_label(l))
                     .unwrap_or_else(|| "human".into());
-                let client = req
-                    .headers()
-                    .get("x-backchannel-client")?
-                    .unwrap_or_else(|| "http".into());
+                let client = client_of(&req);
                 let auth = self.auth(&m.org);
                 let inbox = Inbox::attach(&auth, true, vec![DEFAULT_BOARD.into()]);
                 let me = match self.me(&m.org, &m.name) {
@@ -356,18 +405,17 @@ impl Backchannel {
             }
             (Method::Post, ["v1", "call", tool]) => {
                 let tool = tool.to_string();
-                let Some(m) = self.member_for(bearer(&req).as_deref()).ok().flatten() else {
-                    return json_error(&Error::new(Code::Unauthorized, "missing or unknown token"));
+                let m = match self.member_for(&req) {
+                    Ok(Some(m)) => m,
+                    Ok(None) => return json_error(&signed_out()),
+                    Err(e) => return json_error(&e),
                 };
                 let label = req
                     .headers()
                     .get("x-backchannel-agent")?
                     .filter(|l| is_agent_label(l))
                     .unwrap_or_else(|| "cli".into());
-                let client = req
-                    .headers()
-                    .get("x-backchannel-client")?
-                    .unwrap_or_else(|| "http".into());
+                let client = client_of(&req);
                 let args = match body_json(&mut req, MAX_CALL_BODY).await {
                     Ok(a) => a,
                     Err(e) => return json_error(&e),
@@ -377,7 +425,13 @@ impl Backchannel {
                     .run_tool(&m, &mut label, &client, &tool, &args, &base)
                     .await
                 {
-                    Ok(text) => json_resp(&json!({ "text": text, "label": label }), 200),
+                    Ok(reply) => {
+                        let mut v = json!({ "text": reply.text, "label": label });
+                        if let Some(token) = reply.token {
+                            v["token"] = json!(token);
+                        }
+                        json_resp(&v, 200)
+                    }
                     Err(e) => json_error(&e),
                 }
             }
@@ -397,7 +451,7 @@ impl Backchannel {
             }
             (Method::Get, ["v1", "view", what]) => {
                 let what = what.to_string();
-                match self.member_for(bearer(&req).as_deref()) {
+                match self.member_for(&req) {
                     Ok(Some(m)) if m.admin => {
                         let auth = self.auth(&m.org);
                         let inbox = Inbox::attach(&auth, true, vec![]);
@@ -416,7 +470,7 @@ impl Backchannel {
                         }
                     }
                     Ok(Some(_)) => json_error(&Error::new(Code::Forbidden, "The viewer is for admins. Ask your agent what's new on Backchannel instead.")),
-                    _ => json_error(&Error::new(Code::Unauthorized, "That token didn't work. Paste the token you got when you joined (it starts with bch_).")),
+                    _ => json_error(&Error::new(Code::Unauthorized, "That token didn't work. Paste the token you got when you joined (it starts with bch_). If it was rotated or revoked, ask your org's admin for a sign-in link, or run `backchannel new-token` on a machine that is still signed in.")),
                 }
             }
             _ => json_error(&Error::new(Code::NotFound, format!("nothing at {path}"))),
@@ -425,26 +479,30 @@ impl Backchannel {
 
     // ---- membership ----------------------------------------------------------
 
-    fn member_for(&self, token: Option<&str>) -> R<Option<Member>> {
-        let Some(token) = token.filter(|t| !t.is_empty()) else {
+    /// Who a request is from, going by its token. `None` for a token that is
+    /// unknown, revoked or past its time, and for a member who was removed.
+    fn member_for(&self, req: &Request) -> R<Option<Member>> {
+        let Some(token) = bearer(req).filter(|t| !t.is_empty()) else {
             return Ok(None);
         };
         let sql = self.sql();
+        // Checked before the token is counted as used, so a removed member's
+        // token can't confirm a rotation.
         let Some(r) = sql.one(
-            "SELECT t.org, m.name, m.role FROM tokens t JOIN members m ON m.org = t.org AND m.name = t.name WHERE t.hash = ? AND m.active = 1",
-            p![hash(token)],
+            "SELECT m.role FROM tokens t JOIN members m ON m.org = t.org AND m.name = t.name WHERE t.hash = ? AND m.active = 1",
+            p![tokens::hash(&token)],
         )?
         else {
             return Ok(None);
         };
-        sql.run(
-            "UPDATE tokens SET last_used = ? WHERE hash = ?",
-            p![now(), hash(token)],
-        )?;
+        let Some(session) = tokens::authenticate(&sql, &token, &client_of(req), now())? else {
+            return Ok(None);
+        };
         Ok(Some(Member {
-            org: text(&r, "org"),
-            name: text(&r, "name"),
+            org: session.org.clone(),
+            name: session.name.clone(),
             admin: text(&r, "role") == "admin",
+            session,
         }))
     }
 
@@ -504,12 +562,7 @@ impl Backchannel {
     /// A new bearer token for a member. Only its hash is kept: the token itself
     /// exists in the response that hands it over and nowhere else.
     fn mint_token(&self, org: &str, name: &str) -> R<String> {
-        let token = secret("bch_");
-        self.sql().run(
-            "INSERT INTO tokens (hash, org, name, created_at) VALUES (?, ?, ?, ?)",
-            p![hash(&token), org, name, now()],
-        )?;
-        Ok(token)
+        tokens::mint(&self.sql(), org, name, now())
     }
 
     fn person(body: &Value) -> R<(String, String, String)> {
@@ -676,6 +729,33 @@ impl Backchannel {
         )
     }
 
+    /// Trades a sign-in code from an admin for a new token. The code works once.
+    fn sign_in(&self, body: &Value, base: &str) -> R<Value> {
+        let sql = self.sql();
+        let code = req_str(body, "code")?;
+        let refused = || {
+            Error::new(Code::Forbidden, "that sign-in code isn't valid, has been used or has expired. Ask your org's admin for a new one.")
+        };
+        let Some((org, name)) = tokens::redeem(&sql, &code, now())? else {
+            return Err(refused());
+        };
+        let Some(m) = sql.one(
+            "SELECT role FROM members WHERE org = ? AND name = ? AND active = 1",
+            p![&org, &name],
+        )?
+        else {
+            return Err(refused());
+        };
+        let token = self.mint_token(&org, &name)?;
+        Ok(joined(
+            &org,
+            &name,
+            &token,
+            text(&m, "role") == "admin",
+            base,
+        ))
+    }
+
     fn signup_status(&self, id: &str, s: &str, base: &str) -> R<Value> {
         let sql = self.sql();
         let Some(r) = sql.one(
@@ -739,7 +819,20 @@ impl Backchannel {
 
     fn admin_extra(&self, org: &str, base: &str) -> R<Value> {
         let sql = self.sql();
-        let members = sql.query("SELECT name, role, invited_by, joined_at, active FROM members WHERE org = ? ORDER BY joined_at", p![org])?;
+        let mut members = sql.query("SELECT name, role, invited_by, joined_at, active FROM members WHERE org = ? ORDER BY joined_at", p![org])?;
+        // How many tokens each member holds and when one was last used. Never the tokens.
+        let held = tokens::summary(&sql, org, now())?;
+        for m in members.iter_mut() {
+            let mine = held.iter().find(|h| text(h, "name") == text(m, "name"));
+            m.insert(
+                "tokens".into(),
+                json!(mine.map(|h| int(h, "tokens")).unwrap_or(0)),
+            );
+            m.insert(
+                "token_last_used".into(),
+                json!(mine.and_then(|h| backchannel_core::sql::opt_int(h, "last_used"))),
+            );
+        }
         let requests = sql.query("SELECT id, name, display_name, bio, note, created_at FROM requests WHERE org = ? AND status = 'pending' ORDER BY created_at", p![org])?;
         let invites = sql.query("SELECT prefix, created_by, uses_left, expires_at, note FROM invites WHERE org = ? AND uses_left > 0 AND expires_at > ? ORDER BY created_at DESC", p![org, now()])?;
         let hooks = sql.query("SELECT id, source, board, kind, owner, created_at, last_used FROM hooks WHERE org = ? ORDER BY created_at", p![org])?;
@@ -758,9 +851,12 @@ impl Backchannel {
         name: &str,
         args: &Value,
         base: &str,
-    ) -> R<String> {
+    ) -> R<Reply> {
+        if let Some(reply) = self.token_tool(m, name, args, base)? {
+            return Ok(reply);
+        }
         if let Some(t) = self.relay_tool(m, name, args, base)? {
-            return Ok(t);
+            return Ok(Reply::text(t));
         }
         let auth = self.auth(&m.org);
         let inbox = Inbox::attach(&auth, true, vec![DEFAULT_BOARD.into()]);
@@ -777,7 +873,7 @@ impl Backchannel {
         let address = ctx.address();
         match out {
             None => Err(Error::new(Code::NotFound, format!("no tool called {name}"))),
-            Some(Outcome::Text(t)) => Ok(t),
+            Some(Outcome::Text(t)) => Ok(Reply::text(t)),
             Some(Outcome::Wait { timeout_ms }) => {
                 let deadline = now() + timeout_ms;
                 while now() < deadline {
@@ -794,13 +890,88 @@ impl Backchannel {
                         };
                         if let Some(Outcome::Text(t)) = tools::call(&mut ctx, "inbox", &json!({}))?
                         {
-                            return Ok(t);
+                            return Ok(Reply::text(t));
                         }
                     }
                 }
-                Ok(format!("Nothing new for {address} in {}s. Run `backchannel wait` again to keep listening.", timeout_ms / 1000))
+                Ok(Reply::text(format!("Nothing new for {address} in {}s. Run `backchannel wait` again to keep listening.", timeout_ms / 1000)))
             }
         }
+    }
+
+    /// A member's own tokens, and an admin signing someone out. The two tools
+    /// that make a token return it in `Reply::token`, never in the text.
+    fn token_tool(&self, m: &Member, name: &str, args: &Value, base: &str) -> R<Option<Reply>> {
+        let sql = self.sql();
+        let (org, me) = (m.org.as_str(), m.name.as_str());
+        Ok(Some(match name {
+            "tokens" => Reply::text(render::tokens(
+                me,
+                org,
+                &tokens::list(&sql, org, me, Some(&m.session.hash), now())?,
+            )),
+            "rotate_token" => {
+                let token = tokens::rotate(&sql, &m.session, now())?;
+                Reply {
+                    text: format!(
+                        "Made a new token ({}) to replace the one this request used ({}). It is in this reply's `token` field and is shown this once. The old token keeps working until the new one is first used, and for {} seconds after that. If the new one isn't used within {} minutes it lapses and nothing has changed.",
+                        tokens::id_of(&token),
+                        m.session.id(),
+                        tokens::GRACE_MS / 1000,
+                        tokens::UNUSED_SUCCESSOR_MS / 60_000
+                    ),
+                    token: Some(token),
+                }
+            }
+            "new_token" => {
+                let token = tokens::add(
+                    &sql,
+                    &m.session,
+                    &opt_str(args, "note").unwrap_or_default(),
+                    now(),
+                )?;
+                Reply {
+                    text: format!(
+                        "Made another token for {me} ({}). It is in this reply's `token` field and is shown this once. Use it within {} hours or it lapses. The token this request used is unchanged.",
+                        tokens::id_of(&token),
+                        tokens::UNUSED_EXTRA_MS / 3_600_000
+                    ),
+                    token: Some(token),
+                }
+            }
+            "revoke_token" => {
+                let gone = tokens::revoke(&sql, &m.session, &req_str(args, "id")?, now())?;
+                Reply::text(format!("Revoked token {}. It no longer works.", gone.id))
+            }
+            "reset_tokens" => {
+                if !m.admin {
+                    return Err(Error::new(Code::Forbidden, "only admins can sign someone else out. To replace your own token run `backchannel rotate`."));
+                }
+                let who = req_str(args, "name")?.to_lowercase();
+                if who == me {
+                    return Err(Error::new(Code::Invalid, "that would sign you out too, with nobody left to let you back in. To replace your own token run `backchannel rotate`."));
+                }
+                if sql
+                    .one(
+                        "SELECT 1 AS x FROM members WHERE org = ? AND name = ? AND active = 1",
+                        p![org, &who],
+                    )?
+                    .is_none()
+                {
+                    return Err(Error::new(
+                        Code::NotFound,
+                        format!("nobody called \"{who}\" is a member of {org}"),
+                    ));
+                }
+                let (gone, code) = tokens::reset(&sql, org, &who, me, now())?;
+                Reply::text(format!(
+                    "Signed {who} out everywhere: {gone} token{} revoked. They are still a member, and their webhooks still work.\n\nThey sign back in with this code. It works once, until {}:\n\n  backchannel signin {code} --relay {base}\n\nOr with this link: {base}/join?signin={code}\n\nGive it only to {who}: whoever uses it signs in as them.",
+                    if gone == 1 { "" } else { "s" },
+                    render::when(&iso(now() + tokens::SIGN_IN_MS)),
+                ))
+            }
+            _ => return Ok(None),
+        }))
     }
 
     /// Tools only a relay has: invites and approvals (admins), and webhooks.
@@ -927,10 +1098,8 @@ impl Backchannel {
                     "UPDATE members SET active = 0 WHERE org = ? AND name = ?",
                     p![org, &who],
                 )?;
-                sql.run(
-                    "DELETE FROM tokens WHERE org = ? AND name = ?",
-                    p![org, &who],
-                )?;
+                // Their tokens, and any sign-in code waiting for them.
+                tokens::revoke_all(&sql, org, &who)?;
                 // A webhook URL is a credential too: without this, a removed member could keep posting through theirs.
                 sql.run(
                     "DELETE FROM hooks WHERE org = ? AND owner = ?",
@@ -1023,6 +1192,39 @@ impl Backchannel {
                         .join("\n")
                 }
             }
+            "rotate_hook" => {
+                let id = req_str(args, "id")?;
+                let Some(h) = sql.one(
+                    "SELECT secret_hash, source, board FROM hooks WHERE org = ? AND id = ? AND (owner = ? OR ? = 1)",
+                    p![org, &id, &m.name, m.admin],
+                )?
+                else {
+                    return Err(Error::new(Code::NotFound, format!("no webhook {id} that is yours; list them with `backchannel hooks`")));
+                };
+                let s = secret("");
+                // The old URL keeps working for a day, so whatever posts to it can be
+                // moved over without missing anything. `now` is for a URL that leaked.
+                let immediately = backchannel_core::tools::opt_bool(args, "now");
+                let (old, until) = if immediately {
+                    (None, None)
+                } else {
+                    (Some(text(&h, "secret_hash")), Some(now() + HOOK_GRACE_MS))
+                };
+                sql.run(
+                    "UPDATE hooks SET secret_hash = ?, old_secret_hash = ?, old_expires_at = ? WHERE org = ? AND id = ?",
+                    p![hash(&s), old, until, org, &id],
+                )?;
+                format!(
+                    "New URL for the webhook {} -> {}. It is shown this once:\n\n  {base}/hooks/{id}/{s}\n\n{}",
+                    text(&h, "source"),
+                    text(&h, "board"),
+                    if immediately {
+                        "The old URL stopped working just now.".to_string()
+                    } else {
+                        format!("The old URL keeps working until {}, so you can move whatever posts to it. Rotate again with now to end that early.", render::when(&iso(now() + HOOK_GRACE_MS)))
+                    }
+                )
+            }
             "delete_hook" => {
                 let id = req_str(args, "id")?;
                 sql.run(
@@ -1049,8 +1251,8 @@ impl Backchannel {
         let sql = self.sql();
         // A hook only works while the member who made it is still in the org.
         let Some(h) = sql.one(
-            "SELECT h.* FROM hooks h JOIN members m ON m.org = h.org AND m.name = h.owner WHERE h.id = ? AND h.secret_hash = ? AND m.active = 1",
-            p![id, hash(secret)],
+            "SELECT h.* FROM hooks h JOIN members m ON m.org = h.org AND m.name = h.owner WHERE h.id = ? AND m.active = 1 AND (h.secret_hash = ? OR (h.old_secret_hash = ? AND h.old_expires_at > ?))",
+            p![id, hash(secret), hash(secret), now()],
         )?
         else {
             return Err(Error::new(Code::NotFound, "unknown webhook"));
@@ -1196,7 +1398,43 @@ fn tool_list(m: &Member) -> Vec<Value> {
         json!({ "id": { "type": "string" } }),
         &["id"],
     ));
+    t.push(tools::tool(
+        "rotate_hook",
+        "Give one of your webhooks a new secret URL. The old URL keeps working for a day unless now is true.",
+        json!({ "id": { "type": "string" }, "now": { "type": "boolean", "description": "Stop the old URL at once. For a URL that leaked." } }),
+        &["id"],
+    ));
+    t.push(tools::tool(
+        "tokens",
+        "List your own tokens: when each was made and last used, and by which program.",
+        json!({}),
+        &[],
+    ));
+    t.push(tools::tool(
+        "rotate_token",
+        "Replace the token this request was made with. The new token comes back once, in the reply's token field. The old one keeps working until the new one is first used and for a minute after. This is the user's decision: an agent must not rotate a token on its own initiative.",
+        json!({}),
+        &[],
+    ));
+    t.push(tools::tool(
+        "new_token",
+        "Make one more token for yourself, for another machine or the viewer. It comes back once, in the reply's token field.",
+        json!({ "note": { "type": "string", "description": "A label to tell it apart, e.g. \"office laptop\"." } }),
+        &[],
+    ));
+    t.push(tools::tool(
+        "revoke_token",
+        "Revoke one of your own tokens by its id (from tokens). Not the one this request was made with.",
+        json!({ "id": { "type": "string" } }),
+        &["id"],
+    ));
     if m.admin {
+        t.push(tools::tool(
+            "reset_tokens",
+            "Admins: sign a member out everywhere without removing them. Returns a one-time sign-in code to pass on to them.",
+            json!({ "name": { "type": "string" } }),
+            &["name"],
+        ));
         t.push(tools::tool("create_invite", "Admins: make an invite code and link to share. People pick their own name when they join.",
             json!({ "uses": { "type": "integer", "default": 1 }, "days": { "type": "integer", "default": 7 }, "note": { "type": "string", "description": "Who it's for, for your records." } }), &[]));
         t.push(tools::tool(

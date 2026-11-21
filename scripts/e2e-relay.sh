@@ -9,6 +9,7 @@ call() {
 }
 expect() { grep -q -- "$1" <<<"$2" || { echo "FAIL: expected '$1' in:"; echo "$2"; exit 1; }; echo "ok: $1"; }
 no() { if grep -q -- "$1" <<<"$2"; then echo "FAIL: '$1' leaked into:"; echo "$2"; exit 1; fi; echo "ok: no $1"; }
+match() { grep -Eq -- "$1" <<<"$2" || { echo "FAIL: expected '$1' in:"; echo "$2"; exit 1; }; echo "ok: $1"; }
 
 curl -s --retry 60 --retry-connrefused --retry-delay 2 "$B/.well-known/backchannel" >/dev/null
 
@@ -82,6 +83,80 @@ call "$BOB" subscribe reviewer '{"pattern":"ops/**"}' >/dev/null
 curl -s -X POST "$URL" -d 'plain text alert: disk 91%' >/dev/null
 expect "deploys/webhook" "$(call "$BOB" inbox reviewer)"
 
+# ---- Tokens: replace one, see them, revoke one, and be signed out by an admin. ----
+raw() { local a="${3:-}"; [ -z "$a" ] && a="{}"; curl -s -X POST "$B/v1/call/$2" -H "authorization: Bearer $1" -H "x-backchannel-client: ${4:-e2e}" -H 'content-type: application/json' -d "$a"; }
+alive() { curl -s -o /dev/null -w '%{http_code}' -X POST "$B/v1/call/whoami" -H "authorization: Bearer $1" -H 'content-type: application/json' -d '{}'; }
+tid() { python3 - "$1" <<'PY'
+import base64, hashlib, sys
+n = int.from_bytes(hashlib.sha256(sys.argv[1].strip().encode()).digest()[:5], "big")
+print("".join("0123456789ABCDEFGHJKMNPQRSTVWXYZ"[(n >> (35 - 5 * i)) & 31] for i in range(8)))
+PY
+}
+TINV=$(call "$ADMIN" create_invite cli '{}'); TCODE=$(grep -oE 'CHAN(-[0-9A-Z]{4}){3}' <<<"$TINV" | head -1)
+RITA=$(post /v1/signup "{\"name\":\"rita\",\"invite\":\"$TCODE\"}" | j 'd["token"]')
+LIST=$(call "$RITA" tokens); expect "$(tid "$RITA")  this one" "$LIST"; [ "$(grep -c '  made ' <<<"$LIST")" = 1 ] && echo "ok: one token to start with" || { echo "FAIL: expected one token"; echo "$LIST"; exit 1; }
+# Rotating hands back a new token once, in its own field, and changes nothing until that token is used.
+ROT=$(raw "$RITA" rotate_token); RITA2=$(j 'd["token"]' <<<"$ROT")
+no "$RITA2" "$(j 'd["text"]' <<<"$ROT")"; expect "shown this once" "$ROT"
+match "^200$" "$(alive "$RITA")"
+expect "new, not used yet" "$(call "$RITA" tokens)"
+# Asking again replaces that successor: only the latest one is any good.
+RITA3=$(raw "$RITA" rotate_token | j 'd["token"]')
+match "^401$" "$(alive "$RITA2")"
+# Its first use starts the old token's last minute. Until then both work.
+match "^200$" "$(alive "$RITA3")"; ROTATED_AT=$(date +%s)
+match "^200$" "$(alive "$RITA")"
+expect "$(tid "$RITA")  replaced, works until" "$(call "$RITA3" tokens)"
+expect "already been replaced" "$(raw "$RITA" rotate_token)"
+# A member makes more tokens, one per machine, and kills one without touching the rest.
+VIEWER=$(raw "$RITA3" new_token '{"note":"the viewer"}' | j 'd["token"]'); PHONE=$(raw "$RITA3" new_token '{"note":"phone"}' | j 'd["token"]')
+match "^200 200$" "$(alive "$VIEWER") $(alive "$PHONE")"
+raw "$VIEWER" whoami '{}' viewer >/dev/null
+LIST=$(call "$RITA3" tokens); expect "via viewer  \"the viewer\"" "$LIST"; expect "$(tid "$PHONE") " "$LIST"
+expect "Revoked token $(tid "$PHONE")" "$(call "$RITA3" revoke_token cli "{\"id\":\"$(tid "$PHONE")\"}")"
+match "^401 200 200$" "$(alive "$PHONE") $(alive "$VIEWER") $(alive "$RITA3")"
+REFUSED=$(raw "$PHONE" whoami); expect '"code":"unauthorized"' "$REFUSED"; expect "rotated or revoked" "$REFUSED"; expect "backchannel signin" "$REFUSED"
+expect "the token this command is using" "$(raw "$RITA3" revoke_token "{\"id\":\"$(tid "$RITA3")\"}")"
+expect "no token with the id" "$(raw "$RITA3" revoke_token "{\"id\":\"$(tid "$BOB")\"}")"   # bob's token is not rita's to revoke
+match "^200$" "$(alive "$BOB")"
+# Rotating again and again can't pile tokens up: past ten at once it is refused until old ones lapse.
+T=$RITA3; LIMITED=0
+for i in $(seq 1 12); do
+  R=$(raw "$T" rotate_token)
+  if grep -q '"token"' <<<"$R"; then N=$(j 'd["token"]' <<<"$R"); alive "$N" >/dev/null; T=$N; else grep -q rate_limited <<<"$R" && LIMITED=$((LIMITED+1)); fi
+done
+[ "$LIMITED" -ge 3 ] && echo "ok: $LIMITED of 12 rapid rotations refused" || { echo "FAIL: rapid rotation was not bounded ($LIMITED refused)"; exit 1; }
+[ "$(call "$T" tokens | grep -c '  made ')" -le 10 ] && echo "ok: never more than ten tokens" || { echo "FAIL: more than ten tokens"; exit 1; }
+RITA_NOW=$T
+# An admin signs a member out everywhere, without removing them. Members can't, and nor can an admin to themselves.
+expect "only admins" "$(raw "$BOB" reset_tokens '{"name":"rita"}')"
+expect "sign you out too" "$(raw "$ADMIN" reset_tokens '{"name":"lachlan"}')"
+RESET=$(call "$ADMIN" reset_tokens cli '{"name":"rita"}'); expect "Signed rita out everywhere" "$RESET"
+match "^401 401$" "$(alive "$RITA_NOW") $(alive "$VIEWER")"
+expect "rita" "$(call "$ADMIN" directory)"   # still a member
+SIGN=$(grep -oE 'SIGN(-[0-9A-Z]{4}){4}' <<<"$RESET" | head -1); expect "$B/join?signin=$SIGN" "$RESET"
+expect "isn't valid" "$(post /v1/signin '{"code":"SIGN-0000-0000-0000-0000"}')"
+BACK=$(post /v1/signin "{\"code\":\"$SIGN\"}"); expect '"status":"joined"' "$BACK"; expect '"name":"rita"' "$BACK"
+RITA4=$(j 'd["token"]' <<<"$BACK"); expect "You are rita/" "$(call "$RITA4" whoami)"
+SECOND_TRY=$(post /v1/signin "{\"code\":\"$SIGN\"}"); expect "isn't valid" "$SECOND_TRY"   # a code works once
+# The admin viewer's own token: a separate token for the browser, rotated from there, and the viewer shows who holds how many.
+VT=$(raw "$ADMIN" new_token '{"note":"viewer"}' '' | j 'd["token"]')
+expect '"org":"acme"' "$(curl -s "$B/v1/view/state" -H "authorization: Bearer $VT" -H 'x-backchannel-client: viewer')"
+VT2=$(raw "$VT" rotate_token '{}' viewer | j 'd["token"]')
+STATE=$(curl -s "$B/v1/view/state" -H "authorization: Bearer $VT2" -H 'x-backchannel-client: viewer'); expect '"org":"acme"' "$STATE"
+python3 -c 'import json,sys; m={x["name"]:x for x in json.load(sys.stdin)["extra"]["members"]}; assert m["rita"]["tokens"]==1 and m["lachlan"]["tokens"]>=2, m; print("ok: the viewer shows how many tokens each member holds")' <<<"$STATE"
+no "bch_" "$STATE"
+match "^200$" "$(alive "$ADMIN")"   # the CLI's token is a different one, and is untouched
+# A webhook's secret URL can be replaced too. The old one keeps working for a day, or stops at once with now.
+HR=$(call "$ADMIN" rotate_hook cli "{\"id\":\"$(grep -oE '/hooks/[0-9a-z]+' <<<"$URL" | cut -d/ -f3)\"}")
+URL2=$(grep -oE 'https?://[^ ]+/hooks/[^ ]+' <<<"$HR" | head -1); expect "old URL keeps working until" "$HR"
+expect '"ok":true' "$(curl -s -X POST "$URL2" -d 'via the new url')"; expect '"ok":true' "$(curl -s -X POST "$URL" -d 'via the old url, still')"
+HR=$(call "$ADMIN" rotate_hook cli "{\"id\":\"$(grep -oE '/hooks/[0-9a-z]+' <<<"$URL" | cut -d/ -f3)\",\"now\":true}")
+URL3=$(grep -oE 'https?://[^ ]+/hooks/[^ ]+' <<<"$HR" | head -1)
+expect '"ok":true' "$(curl -s -X POST "$URL3" -d 'via the newest url')"
+expect "unknown webhook" "$(curl -s -X POST "$URL2" -d 'x')"; expect "unknown webhook" "$(curl -s -X POST "$URL" -d 'x')"
+URL=$URL3
+
 # The install script points at this relay, and the MCP endpoint is gone.
 expect "dl/SHA256SUMS" "$(curl -s "$B/install.sh")"
 # A relay speaks for its own address everywhere: discovery, the installer, invite links, link previews.
@@ -141,7 +216,6 @@ expect '"status":"joined"' "$DANA"
 # ---- Rate limits, per address. The numbers are wrangler.toml's: 3 org claims, 10 signups and 20 invite tests a minute. ----
 # The local limiter's windows turn over on the minute, so start counting early in one.
 while [ $(( $(date +%s) % 60 )) -ge 40 ]; do sleep 1; done
-match() { grep -Eq -- "$1" <<<"$2" || { echo "FAIL: expected '$1' in:"; echo "$2"; exit 1; }; echo "ok: $1"; }
 codes() { # <how many> <address> <method> <path> [json, in which @ becomes the request's number]: the status of each request
   local i out=""
   for i in $(seq 1 "$1"); do
@@ -170,6 +244,9 @@ match "^ 200$" "$(codes 1 203.0.113.11 POST /v1/signup '{"name":"asker98","org":
 # Members with a token are not counted by these limiters, and nor is polling for approval.
 match "^( 200){30}$" "$(for i in $(seq 1 30); do printf ' %s' "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$B/v1/call/whoami" -H "authorization: Bearer $BOB" -H 'CF-Connecting-IP: 203.0.113.13' -H 'content-type: application/json' -d '{}')"; done)"
 match "^( 404){30}$" "$(for i in $(seq 1 30); do printf ' %s' "$(curl -s -o /dev/null -w '%{http_code}' "$B/v1/signup/status?id=x&secret=y" -H 'CF-Connecting-IP: 203.0.113.13')"; done)"
+
+# A sign-in code is tested like an invite code, and is rate limited the same way.
+match "^( 403){20} 429 429$" "$(codes 22 203.0.113.14 POST /v1/signin '{"code":"SIGN-0000-0000-0000-0000"}')"
 
 # A removed member loses their token and their webhooks.
 MINV=$(call "$ADMIN" create_invite cli '{}'); MCODE=$(grep -oE 'CHAN(-[0-9A-Z]{4}){3}' <<<"$MINV" | head -1)
@@ -205,6 +282,10 @@ done
 # Viewer is admin-only.
 expect '"posts"' "$(curl -s "$B/v1/view/feed" -H "authorization: Bearer $ADMIN")"
 expect 'for admins' "$(curl -s "$B/v1/view/state" -H "authorization: Bearer $BOB")"
+
+# The token rita replaced early on had a minute left once its successor was used. That minute is up.
+LEFT=$(( ROTATED_AT + 62 - $(date +%s) )); [ "$LEFT" -gt 0 ] && sleep "$LEFT"
+match "^401$" "$(alive "$RITA")"
 
 echo
 echo "All relay checks passed."

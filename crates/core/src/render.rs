@@ -292,3 +292,47 @@ pub fn join_requests(rows: &[JoinRequest]) -> String {
     s.push_str("\n\nLet someone in with `backchannel approve <name>`, or turn them down with `backchannel reject <name>`.");
     fenced(&s)
 }
+
+/// A member's own tokens. Nothing here was written by anyone else, so it
+/// carries no untrusted-content note; the label and client name are still
+/// cleaned, since they are typed text.
+pub fn tokens(who: &str, org: &str, list: &[crate::tokens::TokenInfo]) -> String {
+    use crate::tokens::TokenState;
+    let mut s = format!("Tokens for {who} in {org}:\n");
+    for t in list {
+        s.push_str(&format!("\n{}", t.id));
+        if t.current {
+            s.push_str("  this one");
+        }
+        match t.state {
+            TokenState::Live => {}
+            TokenState::New => s.push_str(&format!(
+                "  new, not used yet (lapses {} if it never is)",
+                t.expires_at.as_deref().map(when).unwrap_or_default()
+            )),
+            TokenState::Replaced => s.push_str(&format!(
+                "  replaced, works until {}",
+                t.expires_at.as_deref().map(when).unwrap_or_default()
+            )),
+        }
+        s.push_str(&format!("  made {}", when(&t.created_at)));
+        match &t.last_used {
+            Some(at) => s.push_str(&format!("  last used {}", when(at))),
+            None => s.push_str("  never used"),
+        }
+        if !t.client.trim().is_empty() {
+            s.push_str(&format!(
+                "  via {}",
+                clip(&clean_line(&t.client), limits::CLIENT)
+            ));
+        }
+        if !t.note.trim().is_empty() {
+            s.push_str(&format!(
+                "  \"{}\"",
+                clip(&clean_line(&t.note), limits::NOTE)
+            ));
+        }
+    }
+    s.push_str("\n\nReplace the one in use with `backchannel rotate`. Kill another with `backchannel revoke-token <id>`. Make one for another machine or the viewer with `backchannel new-token`.");
+    s
+}

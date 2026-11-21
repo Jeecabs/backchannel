@@ -33,7 +33,8 @@ pub const SIGNUPS: Limiter = Limiter {
     window_seconds: 60,
 };
 /// Anything that tells a caller whether an invite code is good:
-/// `GET /v1/invite/<code>`, and a signup that carries a code.
+/// `GET /v1/invite/<code>`, a signup that carries a code, and
+/// `POST /v1/signin` with a sign-in code.
 pub const INVITES: Limiter = Limiter {
     binding: "INVITE_LIMITER",
     window_seconds: 60,
@@ -48,6 +49,8 @@ pub fn limiter_for(method: &Method, path: &str) -> Option<&'static Limiter> {
         (Method::Post, ["v1", "orgs"]) => Some(&ORGS),
         (Method::Post, ["v1", "signup"]) => Some(&SIGNUPS),
         (Method::Get, ["v1", "invite", _]) => Some(&INVITES),
+        // A sign-in code is tested the same way an invite code is.
+        (Method::Post, ["v1", "signin"]) => Some(&INVITES),
         _ => None,
     }
 }
@@ -137,6 +140,7 @@ mod tests {
             limiter_for(&Method::Get, "/v1/invite/CHAN-7KQ2-M9XD-4TRW"),
             Some(&INVITES)
         );
+        assert_eq!(limiter_for(&Method::Post, "/v1/signin"), Some(&INVITES));
         // Pages, polling for approval, and everything that needs a token or a secret URL are not limited here.
         for (method, path) in [
             (Method::Get, "/"),
