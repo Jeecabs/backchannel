@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use serde_json::{json, Value};
 use backchannel_core::authority::{Authority, Mode, Profile};
-use backchannel_core::crypto::{b64, iso, random_bytes, sha256_b64, sign_envelope, ulid, KeyPair};
+use backchannel_core::crypto::{b64, iso, random_bytes, random_code, sha256_b64, sign_envelope, ulid, KeyPair};
 use backchannel_core::inbox::Inbox;
 use backchannel_core::names::{is_agent_label, is_board_name, is_name};
 use backchannel_core::sql::{int, opt_text, text, Sql};
@@ -101,11 +101,17 @@ fn secret(prefix: &str) -> String {
     format!("{prefix}{}", b64(&random_bytes::<24>()))
 }
 
-/// Short, readable invite codes like "CHAN-7KQ2-M9XD".
+/// Invite codes like "CHAN-7KQ2-M9XD-4TRW": twelve random characters, 60 bits.
+/// Anyone can try a code without signing in, so it has to be long enough that
+/// guessing is hopeless even with many invites live at once.
 fn invite_code() -> String {
-    let id = ulid(0);
-    format!("CHAN-{}-{}", &id[18..22], &id[22..26])
+    let c = random_code(12);
+    format!("CHAN-{}-{}-{}", &c[0..4], &c[4..8], &c[8..12])
 }
+
+/// How much of a code is kept readable, so an admin can tell their invites
+/// apart: "CHAN-7K". The rest exists only as a hash.
+const INVITE_PREFIX: usize = 7;
 
 fn hash(s: &str) -> String {
     sha256_b64(s.trim().as_bytes())
@@ -546,7 +552,7 @@ impl Backchannel {
                 let code = invite_code();
                 sql.run(
                     "INSERT INTO invites (hash, org, prefix, created_by, uses_left, expires_at, note, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                    p![hash(&code), org, &code[..10], &m.name, uses, now() + days * 86_400_000, clip(&clean_line(&opt_str(args, "note").unwrap_or_default()), limits::NOTE), now()],
+                    p![hash(&code), org, &code[..INVITE_PREFIX], &m.name, uses, now() + days * 86_400_000, clip(&clean_line(&opt_str(args, "note").unwrap_or_default()), limits::NOTE), now()],
                 )?;
                 format!(
                     "Invite code {code} lets {uses} {} into {org} for {days} day{}.\nShare this link: {base}/join?invite={code}\nThey pick their own name when they join.",
@@ -568,9 +574,15 @@ impl Backchannel {
             }
             "revoke_invite" => {
                 admin_only("revoke invites")?;
+                // The whole code, or the start of it as `invites` lists it ("CHAN-7K...").
                 let code = req_str(args, "code")?.to_uppercase();
-                sql.run("UPDATE invites SET uses_left = 0 WHERE org = ? AND (hash = ? OR prefix = ?)", p![org, hash(&code), code.chars().take(10).collect::<String>()])?;
-                "Revoked.".into()
+                let shown = code.trim_end_matches('.').to_string();
+                let live = sql.one("SELECT COUNT(*) AS n FROM invites WHERE org = ? AND uses_left > 0 AND expires_at > ? AND (hash = ? OR prefix = ?)", p![org, now(), hash(&code), &shown])?.map(|r| int(&r, "n")).unwrap_or(0);
+                if live == 0 {
+                    return Err(Error::new(Code::NotFound, "no live invite matches that code; list them with invites"));
+                }
+                sql.run("UPDATE invites SET uses_left = 0 WHERE org = ? AND (hash = ? OR prefix = ?)", p![org, hash(&code), &shown])?;
+                format!("Revoked {live} invite{}.", if live == 1 { "" } else { "s" })
             }
             "requests" => {
                 admin_only("see join requests")?;
@@ -798,6 +810,18 @@ fn tool_list(m: &Member) -> Vec<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn invite_codes_are_long_and_mostly_hidden() {
+        let code = invite_code();
+        let parts: Vec<&str> = code.split('-').collect();
+        assert_eq!(parts.len(), 4, "{code}");
+        assert_eq!(parts[0], "CHAN");
+        assert!(parts[1..].iter().all(|p| p.len() == 4 && p.bytes().all(|b| b"0123456789ABCDEFGHJKMNPQRSTVWXYZ".contains(&b))), "{code}");
+        assert_ne!(code, invite_code());
+        // What is stored readable gives away two of the twelve random characters.
+        assert_eq!(&code[..INVITE_PREFIX], format!("CHAN-{}", &parts[1][..2]));
+    }
 
     #[test]
     fn oversized_bodies_are_refused() {

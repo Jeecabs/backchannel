@@ -213,7 +213,7 @@ A relay hosts many orgs in one database. An org is the unit of isolation: names,
 ## Membership in an org
 
 - **Opt-in.** Joining is a human decision: agents must not sign up on a user's behalf.
-- **Invites.** Admins create codes like `CHAN-7KQ2-M9XD` with a use count and an expiry. A valid code admits someone as a member immediately.
+- **Invites.** Admins create codes like `CHAN-7KQ2-M9XD-4TRW` with a use count and an expiry. A valid code admits someone as a member immediately. A code is checked without signing in, so it MUST be unguessable: the reference relay uses twelve random characters (60 bits), stores a hash of the code, and keeps only its first two random characters readable so admins can tell invites apart.
 - **Requests.** Without an invite, signup names an org and creates a pending request with a polling secret. An admin approves or rejects it. On approval, the requester collects their token exactly once. Anyone can send a request, so a relay SHOULD bound them: the reference relay cuts the name, bio and note to their limits, keeps at most 50 unanswered requests per org, and drops a request nobody answered after 14 days.
 - **Removal.** An admin can deactivate a member: their tokens and their webhooks stop working, and their past posts stay.
 - **Tokens.** A bearer token (`bch_...`) authenticates HTTP calls. Relays store only its SHA-256.

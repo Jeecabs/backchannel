@@ -8,6 +8,7 @@ call() {
   curl -s -X POST "$B/v1/call/$2" -H "authorization: Bearer $1" -H "x-backchannel-agent: ${3:-cli}" -H 'content-type: application/json' -d "$args" | j 'd.get("text") or d'
 }
 expect() { grep -q -- "$1" <<<"$2" || { echo "FAIL: expected '$1' in:"; echo "$2"; exit 1; }; echo "ok: $1"; }
+no() { if grep -q -- "$1" <<<"$2"; then echo "FAIL: '$1' leaked into:"; echo "$2"; exit 1; fi; echo "ok: no $1"; }
 
 curl -s --retry 60 --retry-connrefused --retry-delay 2 "$B/.well-known/backchannel" >/dev/null
 
@@ -16,8 +17,14 @@ post() { curl -s -X POST "$B$1" -H 'content-type: application/json' -d "$2"; }
 ADMIN=$(post /v1/orgs '{"org":"acme","name":"lachlan","display_name":"Lachlan"}' | j 'd["token"]')
 expect "is taken" "$(post /v1/orgs '{"org":"acme","name":"mallory"}')"
 INV=$(call "$ADMIN" create_invite cli '{"uses":2}')
-CODE=$(grep -oE 'CHAN-[0-9A-Z]{4}-[0-9A-Z]{4}' <<<"$INV" | head -1)
+CODE=$(grep -oE 'CHAN(-[0-9A-Z]{4}){3}' <<<"$INV" | head -1)
 expect "CHAN-" "$INV"
+# The admin sees only the start of a code, and can revoke by it.
+no "$CODE" "$(call "$ADMIN" invites)"; expect "${CODE:0:7}\.\.\." "$(call "$ADMIN" invites)"
+SPARE=$(call "$ADMIN" create_invite cli '{}' | grep -oE 'CHAN(-[0-9A-Z]{4}){3}' | head -1)
+expect "Revoked 1 invite" "$(call "$ADMIN" revoke_invite cli "{\"code\":\"$SPARE\"}")"
+expect "isn't valid" "$(curl -s "$B/v1/invite/$SPARE")"
+expect "isn't valid" "$(curl -s "$B/v1/invite/${CODE:0:14}")"   # the first two groups of a code are not a code
 expect '"org":"acme"' "$(curl -s "$B/v1/invite/$CODE")"
 BOB=$(curl -sf -X POST "$B/v1/signup" -H 'content-type: application/json' -d "{\"name\":\"bob\",\"invite\":\"$CODE\"}" | j 'd["token"]')
 
@@ -74,10 +81,9 @@ expect '404' "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$B/mcp" -d '{}')
 
 # ---- Org isolation: a second org on the same database sees none of the above. ----
 G=$(post /v1/orgs '{"org":"globex","name":"lachlan"}' | j 'd["token"]')   # same person name, different org
-GINV=$(call "$G" create_invite cli '{}'); GCODE=$(grep -oE 'CHAN-[0-9A-Z]{4}-[0-9A-Z]{4}' <<<"$GINV" | head -1)
+GINV=$(call "$G" create_invite cli '{}'); GCODE=$(grep -oE 'CHAN(-[0-9A-Z]{4}){3}' <<<"$GINV" | head -1)
 expect '"org":"globex"' "$(curl -s "$B/v1/invite/$GCODE")"
 GBOB=$(post /v1/signup "{\"name\":\"bob\",\"invite\":\"$GCODE\"}" | j 'd["token"]')   # bob exists in acme too
-no() { if grep -q -- "$1" <<<"$2"; then echo "FAIL: '$1' leaked into:"; echo "$2"; exit 1; fi; echo "ok: no $1"; }
 GDIR=$(call "$G" directory); no carol "$GDIR"; no deploys "$GDIR"
 GREAD=$(call "$G" read cli '{"board":"smoko"}'); no "PR 7" "$GREAD"
 no "ops/deploys" "$(call "$G" boards)"
@@ -119,7 +125,7 @@ DANA=$(post /v1/signup "{\"name\":\"dana\",\"invite\":\"$CODE\"}")
 expect '"status":"joined"' "$DANA"
 
 # A removed member loses their token and their webhooks.
-MINV=$(call "$ADMIN" create_invite cli '{}'); MCODE=$(grep -oE 'CHAN-[0-9A-Z]{4}-[0-9A-Z]{4}' <<<"$MINV" | head -1)
+MINV=$(call "$ADMIN" create_invite cli '{}'); MCODE=$(grep -oE 'CHAN(-[0-9A-Z]{4}){3}' <<<"$MINV" | head -1)
 MOLE=$(post /v1/signup "{\"name\":\"mole\",\"invite\":\"$MCODE\"}" | j 'd["token"]')
 MHOOK=$(call "$MOLE" create_hook cli '{"source":"alerts","board":"smoko","kind":"task"}')
 MURL=$(grep -oE 'https?://[^ ]+/hooks/[^ ]+' <<<"$MHOOK" | head -1 | sed -E "s#^https?://[^/]+#$B#")

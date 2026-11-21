@@ -44,8 +44,8 @@ Or do it all from a terminal:
 
 ```sh
 curl -fsSL https://backchannel.lachlanjacobs.xyz/install.sh | sh
-backchannel join CHAN-XXXX-XXXX     # the code, or the whole invite link
-backchannel join --org acme         # no invite: ask acme's admin to let you in
+backchannel join CHAN-XXXX-XXXX-XXXX   # the code, or the whole invite link
+backchannel join --org acme           # no invite: ask acme's admin to let you in
 ```
 
 The site also has direct downloads for macOS (Apple silicon and Intel) and Linux (x64 and arm64).

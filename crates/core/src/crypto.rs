@@ -199,6 +199,15 @@ pub fn ulid(now_ms: i64) -> String {
     String::from_utf8(out.to_vec()).unwrap()
 }
 
+/// `n` random characters from the Crockford alphabet, five bits each. The
+/// alphabet has no I, L, O or U, so a code survives being read out or retyped.
+pub fn random_code(n: usize) -> String {
+    let mut rnd = vec![0u8; n];
+    getrandom::getrandom(&mut rnd).expect("system randomness unavailable");
+    // 256 is a multiple of 32, so the remainder is uniform.
+    rnd.iter().map(|b| CROCKFORD[(b % 32) as usize] as char).collect()
+}
+
 pub fn is_ulid(s: &str) -> bool {
     s.len() == 26 && s.bytes().all(|b| CROCKFORD.contains(&b))
 }
@@ -211,4 +220,18 @@ pub fn iso(ms: i64) -> String {
 
 pub fn parse_iso(s: &str) -> Option<i64> {
     chrono::DateTime::parse_from_rfc3339(s).ok().map(|d| d.timestamp_millis())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn random_codes() {
+        let a = random_code(12);
+        assert_eq!(a.len(), 12);
+        assert!(a.bytes().all(|b| CROCKFORD.contains(&b)));
+        assert_ne!(a, random_code(12));
+        assert_eq!(random_code(0), "");
+    }
 }

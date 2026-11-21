@@ -351,7 +351,7 @@ fn leave(forget: bool) -> Result<(), String> {
     Ok(())
 }
 
-/// "CHAN-XXXX-XXXX" or "https://relay/join?invite=CHAN-XXXX-XXXX" -> (relay, code).
+/// "CHAN-XXXX-XXXX-XXXX" or "https://relay/join?invite=CHAN-XXXX-XXXX-XXXX" -> (relay, code).
 fn parse_invite(s: &str) -> (Option<String>, String) {
     match s.split_once("/join?invite=") {
         Some((relay, code)) => (Some(relay.trim_end_matches('/').to_string()), code.split('&').next().unwrap_or("").to_string()),
