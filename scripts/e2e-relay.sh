@@ -136,6 +136,25 @@ no "still here" "$(call "$ADMIN" read cli '{"board":"smoko"}')"
 no "alerts" "$(call "$ADMIN" hooks)"
 expect "unauthorized" "$(curl -s -X POST "$B/v1/call/whoami" -H "authorization: Bearer $MOLE" -H 'content-type: application/json' -d '{}')"
 
+# Pages come with a policy that names their scripts by hash, and can't be framed.
+for page in / /join /new /view; do
+  H=$(curl -s -D- -o /dev/null "$B$page")
+  expect "x-frame-options: DENY" "$(tr 'A-Z' 'a-z' <<<"$H" | sed 's/deny/DENY/')"; expect "referrer-policy: no-referrer" "$(tr 'A-Z' 'a-z' <<<"$H")"
+  curl -s "$B$page" | python3 -c '
+import sys, re, hashlib, base64
+csp = sys.argv[1].lower()
+page = sys.stdin.read()
+scripts = re.findall(r"<script[^>]*>(.*?)</script>", page, re.S)
+assert scripts, "no scripts found"
+src = [d for d in sys.argv[1].split(";") if d.strip().lower().startswith("script-src")][0]
+assert "unsafe-inline" not in src, src
+for s in scripts:
+    h = "sha256-" + base64.b64encode(hashlib.sha256(s.encode()).digest()).decode()
+    assert h in src, "a script on the page is not in the policy: " + h
+print("ok: policy for " + sys.argv[2] + " names its " + str(len(scripts)) + " script(s)")
+' "$(grep -i '^content-security-policy:' <<<"$H")" "$page" || { echo "FAIL: content-security-policy on $page"; exit 1; }
+done
+
 # Viewer is admin-only.
 expect '"posts"' "$(curl -s "$B/v1/view/feed" -H "authorization: Bearer $ADMIN")"
 expect 'for admins' "$(curl -s "$B/v1/view/state" -H "authorization: Bearer $BOB")"

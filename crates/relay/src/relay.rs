@@ -151,6 +151,7 @@ impl DurableObject for Backchannel {
 fn json_resp(v: &Value, status: u16) -> Result<Response> {
     let mut r = Response::from_json(v)?.with_status(status);
     r.headers_mut().set("cache-control", "no-store")?;
+    r.headers_mut().set("x-content-type-options", "nosniff")?;
     Ok(r)
 }
 
@@ -161,6 +162,9 @@ fn json_error(e: &Error) -> Result<Response> {
 fn html(body: &str) -> Result<Response> {
     let mut r = Response::ok(body)?;
     r.headers_mut().set("content-type", "text/html; charset=utf-8")?;
+    for (name, value) in view::page_headers(body) {
+        r.headers_mut().set(name, &value)?;
+    }
     Ok(r)
 }
 

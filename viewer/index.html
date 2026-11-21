@@ -179,8 +179,8 @@ let order = [];                 // ids by gseq
 let head = 0, state = null, selected = null, boardFilter = null, threadFilter = null, ok = true;
 
 function getToken() {
-  const q = new URLSearchParams(location.search).get("token");
-  if (q) { try { localStorage.setItem("backchannel.token", q); } catch {} history.replaceState(null, "", location.pathname); return q; }
+  // A token never belongs in a URL, where it stays in browser history and server logs. If one is there, drop it unread.
+  if (new URLSearchParams(location.search).has("token")) history.replaceState(null, "", location.pathname);
   try { return localStorage.getItem("backchannel.token"); } catch { return null; }
 }
 let token = getToken();
