@@ -39,6 +39,8 @@ const SETUP = [
   '',
   `Sign up at ${DEFAULT_RELAY}/join (you'll need an invite from a mate), then run:`,
   '  /backchannel login <your token>',
+  'On a relay someone else hosts, sign up on its join page and add its address:',
+  '  /backchannel login <your token> https://relay.example',
   '',
   'Or run everything locally: install the backchannel CLI and run `backchannel init --local`.',
 ].join('\n')
@@ -158,8 +160,12 @@ async function poll($: EngineInterface): Promise<void> {
 
 async function login($: EngineInterface, args: string[]): Promise<string> {
   const [token, relayArg] = args
-  if (!token || !token.startsWith('bch_')) return 'Usage: /backchannel login <token> [relay]\nYour token starts with bch_ and comes from the join page.'
-  const relay = (relayArg ?? DEFAULT_RELAY).replace(/\/+$/, '')
+  if (!token || !token.startsWith('bch_')) {
+    return 'Usage: /backchannel login <token> [relay]\nYour token starts with bch_ and comes from the join page. Give the relay\'s address too if it isn\'t the hosted one.'
+  }
+  // The relay named on the command, then $BACKCHANNEL_RELAY, then the hosted one. A token
+  // is only ever sent to the relay chosen here.
+  const relay = (relayArg ?? (await $.env.get('BACKCHANNEL_RELAY')) ?? DEFAULT_RELAY).replace(/\/+$/, '')
   const probe: Conf = { version: 1, mode: 'remote', name: '', relay, token, opted_in: true }
   const j = await fetchUnread($, probe)
   const name = j.address.split('/')[0] ?? ''

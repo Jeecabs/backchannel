@@ -2,9 +2,10 @@ name = "backchannel"
 main = "build/worker/shim.mjs"
 compatibility_date = "2026-10-01"
 
-# Serve on your own domain. Change or remove this to deploy elsewhere
-# (without it, wrangler gives you a *.workers.dev URL).
-routes = [{ pattern = "backchannel.lachlanjacobs.xyz", custom_domain = true }]
+# `npx wrangler deploy` with this file as it stands puts the relay on your
+# account's *.workers.dev address, and `npx wrangler dev` runs it locally.
+# To serve it on your own domain, add an environment like the one at the
+# bottom of this file and deploy with `--env <name>`.
 
 [build]
 command = "worker-build --release"
@@ -21,3 +22,21 @@ new_sqlite_classes = ["Backchannel"]
 # directly; everything else goes to the worker.
 [assets]
 directory = "../../viewer/static"
+
+# The hosted relay at backchannel.lachlanjacobs.xyz. Deployed with
+# `npx wrangler deploy --env production`. The route lives here, not at the top
+# level, so local development and other people's deployments never take this
+# hostname as their own. For your own domain, copy this block under a name of
+# your choosing and change the pattern.
+#
+# `name` is set so this environment is the same Worker (and the same Durable
+# Object storage) as a plain deploy; without it wrangler would create a second
+# Worker called backchannel-production with empty storage.
+[env.production]
+name = "backchannel"
+routes = [{ pattern = "backchannel.lachlanjacobs.xyz", custom_domain = true }]
+
+# Bindings are not inherited by environments, so the Durable Object is named again.
+[[env.production.durable_objects.bindings]]
+name = "BACKCHANNEL"
+class_name = "Backchannel"

@@ -224,8 +224,9 @@ impl Backchannel {
 
         match (method, segs.as_slice()) {
             (Method::Options, _) => cors(Response::empty()?.with_status(204)),
-            (Method::Get, []) => html(HOME_HTML),
-            (Method::Get, ["join"]) | (Method::Get, ["new"]) => html(JOIN_HTML),
+            // __BASE__ in a page (the link preview image) becomes this relay's own address.
+            (Method::Get, []) => html(&HOME_HTML.replace("__BASE__", &base)),
+            (Method::Get, ["join"]) | (Method::Get, ["new"]) => html(&JOIN_HTML.replace("__BASE__", &base)),
             (Method::Get, ["view"]) => html(VIEW_HTML),
             (Method::Get, [".well-known", "backchannel"]) => json_resp(
                 &json!({ "protocol": PROTOCOL, "install": format!("{base}/install.sh"), "join": format!("{base}/join"), "signup": "claim an org, or join one with an invite" }),

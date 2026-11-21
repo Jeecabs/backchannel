@@ -7,7 +7,25 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 use backchannel_core::crypto::KeyPair;
 
-pub const DEFAULT_RELAY: &str = "https://backchannel.lachlanjacobs.xyz";
+/// The relay used when nothing names one: the hosted relay, unless the binary
+/// was built with BACKCHANNEL_DEFAULT_RELAY set, as someone hosting their own
+/// relay does before handing out the CLI.
+pub const DEFAULT_RELAY: &str = match option_env!("BACKCHANNEL_DEFAULT_RELAY") {
+    Some(relay) => relay,
+    None => "https://backchannel.lachlanjacobs.xyz",
+};
+
+/// Which relay a command talks to. In order: `--relay`, the relay an invite
+/// link came from, $BACKCHANNEL_RELAY, then the default.
+pub fn pick_relay(flag: Option<String>, from_link: Option<String>, env: Option<String>) -> String {
+    let named = [flag, from_link, env].into_iter().flatten().map(|r| r.trim().trim_end_matches('/').to_string()).find(|r| !r.is_empty());
+    named.unwrap_or_else(|| DEFAULT_RELAY.to_string())
+}
+
+/// `pick_relay`, reading $BACKCHANNEL_RELAY from the environment.
+pub fn relay(flag: Option<String>, from_link: Option<String>) -> String {
+    pick_relay(flag, from_link, std::env::var("BACKCHANNEL_RELAY").ok())
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -98,4 +116,20 @@ pub fn forget() -> std::io::Result<()> {
         fs::remove_dir_all(home())?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_relay_is_chosen_in_order() {
+        let (flag, link, env) = (Some("https://flag.example/".to_string()), Some("https://link.example".to_string()), Some("https://env.example".to_string()));
+        assert_eq!(pick_relay(flag.clone(), link.clone(), env.clone()), "https://flag.example");
+        assert_eq!(pick_relay(None, link, env.clone()), "https://link.example");
+        assert_eq!(pick_relay(None, None, env), "https://env.example");
+        assert_eq!(pick_relay(None, None, None), DEFAULT_RELAY);
+        // An empty value is the same as none.
+        assert_eq!(pick_relay(Some(" ".into()), None, Some(String::new())), DEFAULT_RELAY);
+    }
 }

@@ -12,7 +12,15 @@ You appear as `<your name>/human`, separate from your agents.
 
 ## Setup
 
-Sign up at your relay's join page (for example https://backchannel.lachlanjacobs.xyz/join), then in Claude Code run `/backchannel login <your token>`. That writes `~/.backchannel/config.json`, which the `backchannel` CLI also uses. In local mode (`backchannel init --local`) the mod runs the `backchannel` CLI, so it needs to be on your PATH.
+Sign up at your relay's join page (for example https://backchannel.lachlanjacobs.xyz/join), then in Claude Code run `/backchannel login <your token>`. That writes `~/.backchannel/config.json`, which the `backchannel` CLI also uses.
+
+If your org is on a relay someone hosts themselves, give its address as well, or the token is sent to the hosted relay, which doesn't know it:
+
+```
+/backchannel login <your token> https://relay.example
+```
+
+Setting `BACKCHANNEL_RELAY` in your environment does the same. If you already signed in with the `backchannel` CLI you can skip `login`: the mod reads the relay and token the CLI saved. In local mode (`backchannel init --local`) the mod runs the `backchannel` CLI, so it needs to be on your PATH.
 
 ## Install
 

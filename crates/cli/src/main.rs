@@ -14,7 +14,7 @@ use serde_json::{json, Value};
 use backchannel_core::render;
 use backchannel_core::text::clean_line;
 use backend::{Backend, Local, Remote};
-use config::{Config, Mode, DEFAULT_RELAY};
+use config::{Config, Mode};
 
 #[derive(Parser)]
 #[command(name = "backchannel", version, about = "Backchannel: a message board where agents subscribe to each other.")]
@@ -34,6 +34,7 @@ enum Cmd {
         org: String,
         #[arg(long)]
         name: Option<String>,
+        /// The relay to create it on. Otherwise $BACKCHANNEL_RELAY, then the hosted relay.
         #[arg(long)]
         relay: Option<String>,
     },
@@ -45,6 +46,7 @@ enum Cmd {
         org: Option<String>,
         #[arg(long)]
         name: Option<String>,
+        /// The relay the org is on. Otherwise the one in the invite link, $BACKCHANNEL_RELAY, then the hosted relay.
         #[arg(long)]
         relay: Option<String>,
     },
@@ -56,7 +58,7 @@ enum Cmd {
         display_name: Option<String>,
         #[arg(long)]
         bio: Option<String>,
-        /// Relay to join.
+        /// Relay to join. Otherwise $BACKCHANNEL_RELAY, then the hosted relay.
         #[arg(long)]
         relay: Option<String>,
         /// Invite code from an admin.
@@ -68,8 +70,9 @@ enum Cmd {
     },
     /// Use a token you got from the web signup page.
     Login {
-        #[arg(long, default_value = DEFAULT_RELAY)]
-        relay: String,
+        /// The relay the token is for. Otherwise $BACKCHANNEL_RELAY, then the hosted relay.
+        #[arg(long)]
+        relay: Option<String>,
         #[arg(long)]
         token: String,
     },
@@ -168,7 +171,7 @@ fn main() -> ExitCode {
         Cmd::Create { org, name, relay } => create(org, name, relay),
         Cmd::Join { invite, org, name, relay } => join(invite, org, name, relay),
         Cmd::Init { name, display_name, bio, relay, invite, local } => init(name, display_name, bio, relay, invite, local, None),
-        Cmd::Login { relay, token } => login(&relay, &token),
+        Cmd::Login { relay, token } => login(&config::relay(relay, None), &token),
         Cmd::Whoami => whoami(),
         Cmd::Leave { forget } => leave(forget),
         Cmd::Install => install(),
@@ -278,7 +281,7 @@ fn init(name: Option<String>, display_name: Option<String>, bio: Option<String>,
         Local::open(&c).map_err(|e| e.to_string())?;
         println!("\nYou're in as {name} (local mode). Agents on this machine can now talk to each other.");
     } else {
-        let relay = relay.unwrap_or_else(|| DEFAULT_RELAY.to_string());
+        let relay = config::relay(relay, None);
         let res = match &org {
             Some((slug, true)) => Remote::post(&relay, "/v1/orgs", &json!({ "org": slug, "name": name, "display_name": display_name, "bio": bio })),
             _ => {
@@ -364,12 +367,12 @@ fn join(invite: Option<String>, org: Option<String>, name: Option<String>, relay
         return Err("give an invite code or link, or --org <name> to ask that org's admins. To start a new org: backchannel create <org>".into());
     }
     let (from_link, code) = invite.as_deref().map(parse_invite).unwrap_or((None, String::new()));
-    let relay = relay.or(from_link).unwrap_or_else(|| DEFAULT_RELAY.to_string());
+    let relay = config::relay(relay, from_link);
     init(name, Some(String::new()), Some(String::new()), Some(relay), Some(code), false, org.map(|o| (o.to_lowercase(), false)))
 }
 
 fn create(org: String, name: Option<String>, relay: Option<String>) -> Result<(), String> {
-    let relay = relay.unwrap_or_else(|| DEFAULT_RELAY.to_string());
+    let relay = config::relay(relay, None);
     init(name, Some(String::new()), Some(String::new()), Some(relay), Some(String::new()), false, Some((org.to_lowercase(), true)))
 }
 
@@ -411,4 +414,20 @@ fn view(port: u16) -> Result<(), String> {
         return Ok(());
     }
     viewer::serve(&c, port)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_invite_link_names_its_relay() {
+        assert_eq!(parse_invite("CHAN-7KQ2-M9XD-4TRW"), (None, "CHAN-7KQ2-M9XD-4TRW".to_string()));
+        assert_eq!(parse_invite("https://relay.example/join?invite=CHAN-7KQ2-M9XD-4TRW&x=1"), (Some("https://relay.example".to_string()), "CHAN-7KQ2-M9XD-4TRW".to_string()));
+        // The relay in a link wins over the environment, and --relay wins over both.
+        let (link, code) = parse_invite("https://relay.example/join?invite=CHAN-7KQ2-M9XD-4TRW");
+        assert_eq!(code, "CHAN-7KQ2-M9XD-4TRW");
+        assert_eq!(config::pick_relay(None, link.clone(), Some("https://env.example".into())), "https://relay.example");
+        assert_eq!(config::pick_relay(Some("https://flag.example".into()), link, Some("https://env.example".into())), "https://flag.example");
+    }
 }

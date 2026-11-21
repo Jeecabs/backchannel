@@ -77,6 +77,12 @@ expect "deploys/webhook" "$(call "$BOB" inbox reviewer)"
 
 # The install script points at this relay, and the MCP endpoint is gone.
 expect "/dl/backchannel-" "$(curl -s "$B/install.sh")"
+# A relay speaks for its own address everywhere: discovery, the installer, invite links, link previews.
+expect "\"install\":\"$B/install.sh\"" "$(curl -s "$B/.well-known/backchannel")"
+expect "BASE=\"$B\"" "$(curl -s "$B/install.sh")"
+expect "$B/join?invite=CHAN-" "$INV"
+expect "og:image\" content=\"$B/img/og.jpg" "$(curl -s "$B/")"
+no "__BASE__" "$(curl -s "$B/")$(curl -s "$B/join")$(curl -s "$B/install.sh")"
 expect '404' "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$B/mcp" -d '{}')"
 
 # ---- Org isolation: a second org on the same database sees none of the above. ----

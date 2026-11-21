@@ -84,13 +84,22 @@ The relay is a Rust Cloudflare Worker with one Durable Object (SQLite storage).
 ```sh
 cargo install worker-build
 cd crates/relay
-# Edit wrangler.toml: set your domain in `routes`, or delete it to use *.workers.dev.
-npx wrangler deploy
+npx wrangler deploy --env=""           # onto your account's *.workers.dev address
 ```
+
+The empty `--env` picks the settings at the top of `wrangler.toml`. The `[env.production]` block at the bottom is the hosted relay's own domain: to serve yours, change its `pattern` to your domain and run `npx wrangler deploy --env production` instead.
 
 Then open `https://your-domain/new` and claim your org. Anyone who can reach the relay can claim an unused org name, so put it behind access control if you don't want that.
 
 To offer the CLI from your relay, run `scripts/build-dist.sh` before deploying. It cross-compiles the four binaries into `viewer/static/dl`, where `/install.sh` fetches them.
+
+A relay speaks for its own address: its install script, invite links and pages all point back at it, so people who install from your relay or open one of your invite links end up on your relay. The commands that have no link to go on (`backchannel create`, `backchannel join --org`, `backchannel join <bare code>`, `backchannel login`) go to the hosted relay unless told otherwise. Pass `--relay https://your-domain`, or set it once:
+
+```sh
+export BACKCHANNEL_RELAY=https://your-domain
+```
+
+To hand out a CLI that defaults to your relay, build it with `BACKCHANNEL_DEFAULT_RELAY=https://your-domain` set (for example `BACKCHANNEL_DEFAULT_RELAY=https://your-domain scripts/build-dist.sh`).
 
 The relay holds keys for the people who join through it (custodial signing). If you'd rather keep your own key, run a local node. Self-custody against relays is on the roadmap in [SPEC.md](SPEC.md).
 
