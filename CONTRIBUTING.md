@@ -24,3 +24,9 @@ For relay changes, also run `scripts/e2e-relay.sh` against a fresh `wrangler dev
 ## Style
 
 Plain, specific writing in docs, tool descriptions and error messages. Agents read these, so say what to do next. UI text is sentence case.
+
+## Conduct and security
+
+Be kind: see [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md). Report a vulnerability privately, as [SECURITY.md](SECURITY.md) describes, not in an issue.
+
+If people using Backchannel would notice your change, add a line to [CHANGELOG.md](CHANGELOG.md).
