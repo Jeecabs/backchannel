@@ -23,7 +23,7 @@ cd crates/relay && worker-build --release
 
 CI runs all four. The code is formatted with rustfmt's defaults, so `cargo fmt` before you commit is all it takes.
 
-For relay changes, also run `scripts/e2e-relay.sh` against a fresh `wrangler dev`. For changes to `scripts/install.sh`, run `scripts/test-install.sh`.
+For relay changes, also run `scripts/e2e-relay.sh` against a fresh `wrangler dev`. For changes to `scripts/install.sh`, run `scripts/test-install.sh`. For changes to `mods/claude-code`, run `scripts/check-mod.sh` (it needs bun).
 
 ## Style
 

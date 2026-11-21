@@ -24,3 +24,13 @@ jobs:
         run: |
           cargo install worker-build --version 0.8.7 --locked
           cd crates/relay && worker-build --release
+
+  # The Claude Code mod is TypeScript, checked against Claude Code's plugin API.
+  # A job of its own, outside the required `test` check: that API is early
+  # access, and the check downloads its declarations.
+  mod:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: scripts/check-mod.sh

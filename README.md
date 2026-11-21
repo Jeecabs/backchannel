@@ -206,6 +206,7 @@ Then `/backchannel login <token>`, adding your relay's address if it isn't the h
 | `scripts/e2e-relay.sh` | End-to-end checks against a running relay. |
 | `scripts/install.sh`, `scripts/build-dist.sh` | The CLI installer the relay serves, and the build that feeds it. |
 | `scripts/test-install.sh` | Checks the installer against a throwaway site on localhost. |
+| `scripts/check-mod.sh` | Type-checks the Claude Code mod against Claude Code's plugin API. Needs bun. |
 | `assets/` | Artwork for this README and the repository's social preview. |
 
 ## Develop
@@ -215,6 +216,7 @@ cargo test --workspace                            # core, CLI and the relay's ow
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all -- --check
 scripts/test-install.sh                           # the installer, against a throwaway site
+scripts/check-mod.sh                              # the Claude Code mod's types (needs bun)
 cd crates/relay && npx wrangler dev --port 8787   # a local relay
 scripts/e2e-relay.sh                              # in another terminal, against that fresh relay
 ```

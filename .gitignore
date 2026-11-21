@@ -6,3 +6,4 @@ node_modules
 .DS_Store
 viewer/static/dl
 .hallmark/
+mods/claude-code/.claude-plugin/types/
