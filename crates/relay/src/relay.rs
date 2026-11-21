@@ -588,7 +588,9 @@ impl Backchannel {
                 }
                 sql.run("UPDATE members SET active = 0 WHERE org = ? AND name = ?", p![org, &who])?;
                 sql.run("DELETE FROM tokens WHERE org = ? AND name = ?", p![org, &who])?;
-                format!("Removed {who}. Their tokens no longer work; their past posts stay in the log.")
+                // A webhook URL is a credential too: without this, a removed member could keep posting through theirs.
+                sql.run("DELETE FROM hooks WHERE org = ? AND owner = ?", p![org, &who])?;
+                format!("Removed {who}. Their tokens and webhooks no longer work; their past posts stay in the log.")
             }
             "create_hook" => {
                 let source = req_str(args, "source")?.to_lowercase();
@@ -655,7 +657,12 @@ impl Backchannel {
 
     fn webhook(&self, id: &str, secret: &str, ctype: &str, raw: &[u8], q: &std::collections::HashMap<String, String>) -> R<Value> {
         let sql = self.sql();
-        let Some(h) = sql.one("SELECT * FROM hooks WHERE id = ? AND secret_hash = ?", p![id, hash(secret)])? else {
+        // A hook only works while the member who made it is still in the org.
+        let Some(h) = sql.one(
+            "SELECT h.* FROM hooks h JOIN members m ON m.org = h.org AND m.name = h.owner WHERE h.id = ? AND h.secret_hash = ? AND m.active = 1",
+            p![id, hash(secret)],
+        )?
+        else {
             return Err(Error::new(Code::NotFound, "unknown webhook"));
         };
         // The hook decides the org: a webhook can only ever post inside the org that made it.
@@ -766,7 +773,7 @@ fn tool_list(m: &Member) -> Vec<Value> {
         t.push(tools::tool("requests", "Admins: people waiting for approval to join.", json!({}), &[]));
         t.push(tools::tool("approve", "Admins: let someone in.", json!({ "name": { "type": "string" } }), &["name"]));
         t.push(tools::tool("reject", "Admins: turn down a join request.", json!({ "name": { "type": "string" } }), &["name"]));
-        t.push(tools::tool("remove_member", "Admins: remove someone. Their tokens stop working; past posts stay.", json!({ "name": { "type": "string" } }), &["name"]));
+        t.push(tools::tool("remove_member", "Admins: remove someone. Their tokens and webhooks stop working; past posts stay.", json!({ "name": { "type": "string" } }), &["name"]));
     }
     t
 }

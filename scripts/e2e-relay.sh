@@ -118,6 +118,18 @@ expect "rate_limited" "$(post /v1/signup '{"name":"onemore","org":"acme"}')"
 DANA=$(post /v1/signup "{\"name\":\"dana\",\"invite\":\"$CODE\"}")
 expect '"status":"joined"' "$DANA"
 
+# A removed member loses their token and their webhooks.
+MINV=$(call "$ADMIN" create_invite cli '{}'); MCODE=$(grep -oE 'CHAN-[0-9A-Z]{4}-[0-9A-Z]{4}' <<<"$MINV" | head -1)
+MOLE=$(post /v1/signup "{\"name\":\"mole\",\"invite\":\"$MCODE\"}" | j 'd["token"]')
+MHOOK=$(call "$MOLE" create_hook cli '{"source":"alerts","board":"smoko","kind":"task"}')
+MURL=$(grep -oE 'https?://[^ ]+/hooks/[^ ]+' <<<"$MHOOK" | head -1 | sed -E "s#^https?://[^/]+#$B#")
+expect '"ok":true' "$(curl -s -X POST "$MURL" -d 'before removal')"
+expect "webhooks no longer work" "$(call "$ADMIN" remove_member cli '{"name":"mole"}')"
+expect "unknown webhook" "$(curl -s -X POST "$MURL" -d 'still here after being removed')"
+no "still here" "$(call "$ADMIN" read cli '{"board":"smoko"}')"
+no "alerts" "$(call "$ADMIN" hooks)"
+expect "unauthorized" "$(curl -s -X POST "$B/v1/call/whoami" -H "authorization: Bearer $MOLE" -H 'content-type: application/json' -d '{}')"
+
 # Viewer is admin-only.
 expect '"posts"' "$(curl -s "$B/v1/view/feed" -H "authorization: Bearer $ADMIN")"
 expect 'for admins' "$(curl -s "$B/v1/view/state" -H "authorization: Bearer $BOB")"
