@@ -283,6 +283,43 @@ done
 expect '"posts"' "$(curl -s "$B/v1/view/feed" -H "authorization: Bearer $ADMIN")"
 expect 'for admins' "$(curl -s "$B/v1/view/state" -H "authorization: Bearer $BOB")"
 
+# ---- The CLI itself, when one is given: BACKCHANNEL_CLI=target/debug/backchannel scripts/e2e-relay.sh ----
+if [ -n "${BACKCHANNEL_CLI:-}" ]; then (
+  W=$(mktemp -d); trap 'rm -rf "$W"' EXIT
+  export BACKCHANNEL_HOME="$W/backchannel" HOME="$W/home"; mkdir -p "$HOME"
+  cli() { "$BACKCHANNEL_CLI" "$@" 2>&1 || true; }
+  stored() { python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["token"])' "$BACKCHANNEL_HOME/config.json"; }
+  CT=$(raw "$ADMIN" new_token '{"note":"cli test"}' | j 'd["token"]')
+  BACKCHANNEL_TOKEN=$CT cli login --relay "$B" >/dev/null
+  match "^$CT$" "$(stored)"
+  # rotate --now: the file holds a new token, readable only by its owner, and the old one is dead at once.
+  OUT=$(cli rotate --now); expect "Rotated" "$OUT"; expect "stopped working just now" "$OUT"; no "bch_" "$OUT"
+  CT2=$(stored); no "$CT" "$CT2"
+  match "^401 200$" "$(alive "$CT") $(alive "$CT2")"
+  match "^-rw-------" "$(ls -l "$BACKCHANNEL_HOME/config.json")"
+  expect "$(tid "$CT2")  this one" "$(cli tokens)"
+  # Plain rotate: both work for the minute that follows.
+  OUT=$(cli rotate); expect "stops working in a minute" "$OUT"; CT3=$(stored)
+  match "^200 200$" "$(alive "$CT2") $(alive "$CT3")"
+  # A second token is shown once, and can be revoked by id.
+  OUT=$(cli new-token --note spare); SPARE_T=$(grep -oE 'bch_[A-Za-z0-9_-]+' <<<"$OUT" | head -1); expect "shown this once" "$OUT"
+  match "^200$" "$(alive "$SPARE_T")"
+  expect "Revoked token $(tid "$SPARE_T")" "$(cli revoke-token "$(tid "$SPARE_T")")"
+  match "^401$" "$(alive "$SPARE_T")"
+  # Its token revoked from elsewhere, the CLI says one plain sentence about what to run.
+  raw "$ADMIN" revoke_token "{\"id\":\"$(tid "$CT3")\"}" >/dev/null
+  OUT=$(cli --as frontend inbox); expect "^backchannel: Your token doesn't work any more: it was rotated or revoked" "$OUT"; expect "backchannel signin <code>" "$OUT"
+  match "^1$" "$(wc -l <<<"$OUT" | tr -d ' ')"
+  # Signing in again with an admin's code, given as the whole link.
+  LINK=$(call "$ADMIN" reset_tokens cli '{"name":"rita"}' | grep -oE 'https?://[^ ]+/join\?signin=SIGN(-[0-9A-Z]{4}){4}' | head -1)
+  expect "Signed in again as rita in the org acme" "$(cli signin "$LINK")"
+  expect "You are rita/cli" "$(cli call whoami)"
+  expect "isn't valid" "$(cli signin "$LINK")"
+  # In local mode there is nothing to rotate, and it says so.
+  rm -rf "$BACKCHANNEL_HOME"; cli init --local --name solo </dev/null >/dev/null
+  expect "no token to change" "$(cli rotate)"; expect "needs a relay" "$(cli tokens)"
+) fi
+
 # The token rita replaced early on had a minute left once its successor was used. That minute is up.
 LEFT=$(( ROTATED_AT + 62 - $(date +%s) )); [ "$LEFT" -gt 0 ] && sleep "$LEFT"
 match "^401$" "$(alive "$RITA")"

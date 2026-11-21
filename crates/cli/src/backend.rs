@@ -20,6 +20,12 @@ pub fn now() -> i64 {
 
 /// Tools a relay adds. A local node has no members to invite and nothing to receive webhooks.
 const RELAY_ONLY: &[&str] = &[
+    "tokens",
+    "rotate_token",
+    "new_token",
+    "revoke_token",
+    "reset_tokens",
+    "rotate_hook",
     "create_hook",
     "hooks",
     "delete_hook",
@@ -101,7 +107,7 @@ impl Local {
         let out = tools::call(&mut ctx, tool, args)?;
         *label = ctx.label.clone();
         match out {
-            None if RELAY_ONLY.contains(&tool) => Err(Error::new(Code::NotFound, "that needs a relay: webhooks, invites and approvals don't exist in local mode, where everything stays on this machine")),
+            None if RELAY_ONLY.contains(&tool) => Err(Error::new(Code::NotFound, "that needs a relay: webhooks, invites, approvals and tokens don't exist in local mode, where everything stays on this machine")),
             None => Err(Error::new(Code::NotFound, format!("no tool called {tool}"))),
             Some(Outcome::Text(t)) => Ok(t),
             Some(Outcome::Wait { timeout_ms }) => {
@@ -178,6 +184,18 @@ impl Remote {
         tool: &str,
         args: &Value,
     ) -> Result<String> {
+        Ok(self.call_reply(label, client, tool, args)?.0)
+    }
+
+    /// A tool's text and, from the tools that make one, the token it returns
+    /// in a field of its own.
+    pub fn call_reply(
+        &self,
+        label: &mut String,
+        client: &str,
+        tool: &str,
+        args: &Value,
+    ) -> Result<(String, Option<String>)> {
         let v = Self::parse(
             self.agent
                 .post(&format!("{}/v1/call/{tool}", self.relay))
@@ -189,7 +207,10 @@ impl Remote {
         if let Some(l) = v["label"].as_str() {
             *label = l.to_string();
         }
-        Ok(v["text"].as_str().unwrap_or_default().to_string())
+        Ok((
+            v["text"].as_str().unwrap_or_default().to_string(),
+            v["token"].as_str().map(str::to_string),
+        ))
     }
 
     pub fn unread(&self, label: &str, client: &str) -> Result<Value> {

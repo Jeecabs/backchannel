@@ -93,15 +93,73 @@ pub fn load() -> Option<Config> {
     serde_json::from_str(&fs::read_to_string(config_path()).ok()?).ok()
 }
 
+/// Writes a file only its owner can read, and swaps it into place in one
+/// step: another program reading it sees the old contents or the new, never
+/// half of either, and the file is never readable by anyone else on the way.
 fn write_private(path: &PathBuf, contents: &str) -> std::io::Result<()> {
+    use std::io::Write;
     fs::create_dir_all(home())?;
-    fs::write(path, contents)?;
+    let tmp = path.with_extension(format!("tmp-{}", std::process::id()));
+    let _ = fs::remove_file(&tmp);
+    let mut options = fs::OpenOptions::new();
+    options.write(true).create_new(true);
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let written = options.open(&tmp).and_then(|mut f| {
+        f.write_all(contents.as_bytes())?;
+        f.sync_all()
+    });
+    if let Err(e) = written.and_then(|_| fs::rename(&tmp, path)) {
+        let _ = fs::remove_file(&tmp);
+        return Err(e);
     }
     Ok(())
+}
+
+/// Held while a command changes the stored token, so two of them can't both
+/// replace it and leave the loser's on disk. Released when dropped.
+pub struct Lock(PathBuf);
+
+/// How old a lock can be before it is taken to be left over from a command
+/// that died, and is cleared.
+const STALE_LOCK: std::time::Duration = std::time::Duration::from_secs(120);
+
+impl Lock {
+    pub fn take() -> Result<Lock, String> {
+        let path = home().join("token.lock");
+        fs::create_dir_all(home()).map_err(|e| e.to_string())?;
+        for _ in 0..2 {
+            match fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&path)
+            {
+                Ok(_) => return Ok(Lock(path)),
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                    let age = fs::metadata(&path)
+                        .and_then(|m| m.modified())
+                        .ok()
+                        .and_then(|t| t.elapsed().ok());
+                    if age.is_some_and(|a| a > STALE_LOCK) {
+                        let _ = fs::remove_file(&path);
+                    } else {
+                        return Err("another backchannel command is changing the token on this machine. Try again in a moment.".into());
+                    }
+                }
+                Err(e) => return Err(format!("couldn't lock {}: {e}", path.display())),
+            }
+        }
+        Err(format!("couldn't lock {}", path.display()))
+    }
+}
+
+impl Drop for Lock {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.0);
+    }
 }
 
 pub fn save(c: &Config) -> std::io::Result<()> {
@@ -137,6 +195,36 @@ pub fn forget() -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_config_is_private_and_swapped_in_whole() {
+        let dir =
+            std::env::temp_dir().join(format!("backchannel-config-test-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("config.json");
+        // (home() is elsewhere; only the file's own handling is under test.)
+        let write = |text: &str| {
+            let tmp = path.with_extension(format!("tmp-{}", std::process::id()));
+            write_private(&path, text).unwrap();
+            assert!(!tmp.exists(), "the temporary file is left behind");
+        };
+        write("first");
+        write("second, replacing the first");
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            "second, replacing the first"
+        );
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+        }
+        assert_eq!(fs::read_dir(&dir).unwrap().count(), 1);
+        fs::remove_dir_all(&dir).unwrap();
+    }
 
     #[test]
     fn the_relay_is_chosen_in_order() {

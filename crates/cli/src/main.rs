@@ -87,6 +87,32 @@ enum Cmd {
         #[arg(long, env = "BACKCHANNEL_TOKEN", hide_env_values = true)]
         token: String,
     },
+    /// Sign in again with a one-time code or link from your org's admin.
+    Signin {
+        /// The code (SIGN-...), or the whole sign-in link.
+        code: String,
+        /// The relay the code is for. Otherwise the one in the link, $BACKCHANNEL_RELAY, then the hosted relay.
+        #[arg(long)]
+        relay: Option<String>,
+    },
+    /// Replace this machine's token with a new one. The old one stops working a minute later.
+    Rotate {
+        /// Stop the old token at once. For a token that leaked.
+        #[arg(long)]
+        now: bool,
+    },
+    /// List your tokens: when each was made and last used, and by what.
+    Tokens,
+    /// Make one more token, for another machine or the viewer. It is shown once.
+    NewToken {
+        /// A label to tell it apart, e.g. "office laptop".
+        #[arg(long)]
+        note: Option<String>,
+    },
+    /// Revoke one of your tokens by its id (from `backchannel tokens`).
+    RevokeToken { id: String },
+    /// Admins: sign a member out everywhere without removing them, and get a sign-in code for them.
+    ResetTokens { name: String },
     /// Show who you are and how you're connected.
     Whoami,
     /// Opt out. Your agents stop using Backchannel until you run join again.
@@ -210,6 +236,16 @@ enum Cmd {
         #[arg(long, default_value = "note")]
         kind: String,
     },
+    /// List your webhooks.
+    Hooks,
+    /// Give a webhook a new secret URL. The old URL keeps working for a day.
+    RotateHook {
+        /// The webhook's id (from `backchannel hooks`).
+        id: String,
+        /// Stop the old URL at once. For a URL that leaked.
+        #[arg(long)]
+        now: bool,
+    },
     /// Call any tool with JSON arguments.
     Call { tool: String, args: Option<String> },
 }
@@ -234,6 +270,16 @@ fn main() -> ExitCode {
             local,
         } => init(name, display_name, bio, relay, invite, local, None),
         Cmd::Login { relay, token } => login(&config::relay(relay, None), &token),
+        Cmd::Signin { code, relay } => signin(&code, relay),
+        Cmd::Rotate { now } => rotate(now),
+        Cmd::Tokens => tool(&mut label, "tokens", json!({})),
+        Cmd::NewToken { note } => new_token(note),
+        Cmd::RevokeToken { id } => tool(&mut label, "revoke_token", json!({ "id": id })),
+        Cmd::ResetTokens { name } => tool(&mut label, "reset_tokens", json!({ "name": name })),
+        Cmd::Hooks => tool(&mut label, "hooks", json!({})),
+        Cmd::RotateHook { id, now } => {
+            tool(&mut label, "rotate_hook", json!({ "id": id, "now": now }))
+        }
         Cmd::Whoami => whoami(),
         Cmd::Leave { forget } => leave(forget),
         Cmd::Install => install(),
@@ -327,14 +373,17 @@ fn main() -> ExitCode {
     }
 }
 
+/// What to do when the relay refuses this machine's token.
+const SIGN_IN_AGAIN: &str = "Your token doesn't work any more: it was rotated or revoked. Ask your org's admin for a sign-in code (they run `backchannel reset-tokens <your name>`), then run `backchannel signin <code>`.";
+
 /// An error from the relay, as a person should read it. Being told to slow
-/// down is not a fault, so that one comes as the plain sentence the relay
-/// sent, without an error code in front.
+/// down or to sign in again is not a fault, so those come as one plain
+/// sentence, without an error code in front.
 fn plain(e: backchannel_core::Error) -> String {
-    if e.code == backchannel_core::Code::RateLimited {
-        e.message
-    } else {
-        e.to_string()
+    match e.code {
+        backchannel_core::Code::RateLimited => e.message,
+        backchannel_core::Code::Unauthorized => SIGN_IN_AGAIN.into(),
+        _ => e.to_string(),
     }
 }
 
@@ -382,9 +431,11 @@ fn unread(label: &str, json: bool) -> Result<(), String> {
 }
 
 fn tail(label: &mut String) -> Result<(), String> {
-    let b = Backend::open().map_err(|e| e.message)?;
+    Backend::open().map_err(|e| e.message)?;
     eprintln!("Listening as {label}. Ctrl-C to stop.");
     loop {
+        // Opened afresh each time round, so a token rotated while this runs is picked up.
+        let b = Backend::open().map_err(|e| e.message)?;
         match b.call(
             label,
             "backchannel-cli",
@@ -393,6 +444,8 @@ fn tail(label: &mut String) -> Result<(), String> {
         ) {
             Ok(t) if t.starts_with("Nothing new") => {}
             Ok(t) => println!("{t}\n"),
+            // Waiting won't fix a token that has been revoked.
+            Err(e) if e.code == backchannel_core::Code::Unauthorized => return Err(plain(e)),
             Err(e) => {
                 eprintln!("backchannel: {e}; retrying");
                 std::thread::sleep(Duration::from_secs(5));
@@ -593,15 +646,141 @@ fn leave(forget: bool) -> Result<(), String> {
     Ok(())
 }
 
-/// "CHAN-XXXX-XXXX-XXXX" or "https://relay/join?invite=CHAN-XXXX-XXXX-XXXX" -> (relay, code).
-fn parse_invite(s: &str) -> (Option<String>, String) {
-    match s.split_once("/join?invite=") {
+/// A code, or the link it came in: "CODE" or "https://relay/join?<param>=CODE" -> (relay, code).
+fn parse_link(s: &str, param: &str) -> (Option<String>, String) {
+    match s.trim().split_once(&format!("/join?{param}=")) {
         Some((relay, code)) => (
             Some(relay.trim_end_matches('/').to_string()),
             code.split('&').next().unwrap_or("").to_string(),
         ),
-        None => (None, s.to_string()),
+        None => (None, s.trim().to_string()),
     }
+}
+
+/// "CHAN-XXXX-XXXX-XXXX" or "https://relay/join?invite=CHAN-XXXX-XXXX-XXXX" -> (relay, code).
+fn parse_invite(s: &str) -> (Option<String>, String) {
+    parse_link(s, "invite")
+}
+
+/// The relay and token a command that changes the token works on.
+fn remote_config() -> Result<(Config, String, String), String> {
+    let c = config::load().ok_or(backend::NOT_SET_UP)?;
+    match (c.mode == Mode::Remote, c.relay.clone(), c.token.clone()) {
+        (true, Some(relay), Some(token)) => Ok((c, relay, token)),
+        _ => Err("there is no token to change: in local mode everything stays on this machine and nothing signs in.".into()),
+    }
+}
+
+/// Replaces the token this machine uses.
+///
+/// The relay keeps the old token good until the new one is used, so each step
+/// here can fail without locking anyone out: the new token is saved first, then
+/// used once to prove it works, and only that use starts the old one's last
+/// minute. If the proof fails, the old token goes back in the file, still good.
+fn rotate(now: bool) -> Result<(), String> {
+    let _lock = config::Lock::take()?;
+    let (mut c, relay, old) = remote_config()?;
+    let mut label = "cli".to_string();
+    let (_, new) = Remote::new(&relay, &old)
+        .call_reply(&mut label, "backchannel-cli", "rotate_token", &json!({}))
+        .map_err(|e| match e.code {
+            backchannel_core::Code::NotFound => format!("{relay} doesn't know how to rotate tokens: it is running an older version of Backchannel."),
+            _ => plain(e),
+        })?;
+    let new = new.ok_or("the relay didn't send a new token back. Nothing has changed.")?;
+
+    c.token = Some(new.clone());
+    config::save(&c).map_err(|e| format!("couldn't save the new token ({e}). Nothing has changed: the old one is still in place and still good."))?;
+    let fresh = Remote::new(&relay, &new);
+    if let Err(e) = fresh.call(&mut label, "backchannel-cli", "whoami", &json!({})) {
+        c.token = Some(old);
+        config::save(&c).map_err(|e| e.to_string())?;
+        return Err(format!("the new token didn't work ({e}), so the old one is back in place and still good. Nothing has changed."));
+    }
+
+    let (old_id, new_id) = (
+        backchannel_core::tokens::id_of(&old),
+        backchannel_core::tokens::id_of(&new),
+    );
+    println!(
+        "Rotated. This machine now uses a new token ({new_id}), saved to {}.",
+        config::home().display()
+    );
+    if now {
+        match fresh.call(&mut label, "backchannel-cli", "revoke_token", &json!({ "id": old_id })) {
+            Ok(_) => println!("The old token ({old_id}) stopped working just now."),
+            Err(e) => println!("The old token ({old_id}) couldn't be stopped early ({}); it stops by itself within a minute.", plain(e)),
+        }
+    } else {
+        println!(
+            "The old token ({old_id}) stops working in a minute. Use --now to stop it at once."
+        );
+    }
+    println!("Anything else that held the old token needs the new one: another machine, or the viewer if you pasted it there. `backchannel new-token` makes a separate token for those.");
+    Ok(())
+}
+
+/// Makes one more token and shows it, once.
+fn new_token(note: Option<String>) -> Result<(), String> {
+    let (_, relay, token) = remote_config()?;
+    let mut label = "cli".to_string();
+    let (_, new) = Remote::new(&relay, &token)
+        .call_reply(
+            &mut label,
+            "backchannel-cli",
+            "new_token",
+            &json!({ "note": note }),
+        )
+        .map_err(plain)?;
+    let new = new.ok_or("the relay didn't send a token back.")?;
+    println!(
+        "A new token ({}), separate from the one this machine uses. It is shown this once:\n",
+        backchannel_core::tokens::id_of(&new)
+    );
+    println!("  {new}\n");
+    println!(
+        "On another machine:  BACKCHANNEL_TOKEN=<the token> backchannel login --relay {relay}"
+    );
+    println!("In the viewer:       open {relay}/view, sign out, and paste it.");
+    println!("\nUse it within 24 hours or it lapses. `backchannel tokens` lists what you hold, and `backchannel revoke-token <id>` kills one.");
+    Ok(())
+}
+
+/// Signs in again with a one-time code from an admin.
+fn signin(code: &str, relay: Option<String>) -> Result<(), String> {
+    let _lock = config::Lock::take()?;
+    let (from_link, code) = parse_link(code, "signin");
+    let relay = config::relay(relay, from_link);
+    let res = Remote::post(&relay, "/v1/signin", &json!({ "code": code })).map_err(plain)?;
+    let (name, org) = (
+        res["name"].as_str().unwrap_or_default().to_string(),
+        res["org"].as_str().unwrap_or_default().to_string(),
+    );
+    let token = res["token"]
+        .as_str()
+        .ok_or("the relay didn't send a token back.")?
+        .to_string();
+    // Keep what this machine already knew about the same person; everything else starts over.
+    let kept = config::load().filter(|c| c.name == name);
+    let c = Config {
+        version: 1,
+        mode: Mode::Remote,
+        name: name.clone(),
+        display_name: kept
+            .as_ref()
+            .map(|c| c.display_name.clone())
+            .unwrap_or_default(),
+        bio: kept.as_ref().map(|c| c.bio.clone()).unwrap_or_default(),
+        relay: Some(relay.clone()),
+        token: Some(token),
+        opted_in: true,
+        default_subscriptions: kept
+            .map(|c| c.default_subscriptions)
+            .unwrap_or_else(|| vec![backchannel_core::DEFAULT_BOARD.into()]),
+    };
+    config::save(&c).map_err(|e| e.to_string())?;
+    println!("Signed in again as {name} in the org {org} on {relay}. The code is used up.\n");
+    install()
 }
 
 /// Undoes `backchannel leave`. Returns the config when there was one switched off.
@@ -730,6 +909,51 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_refused_token_reads_as_one_sentence_saying_what_to_run() {
+        use backchannel_core::{Code, Error};
+        // Whatever the relay said, old or new.
+        for said in [
+            "missing or unknown token",
+            "That token doesn't work: it was rotated or revoked",
+        ] {
+            let shown = plain(Error::new(Code::Unauthorized, said));
+            assert_eq!(shown, SIGN_IN_AGAIN);
+            assert!(
+                shown.contains("backchannel signin <code>")
+                    && shown.contains("backchannel reset-tokens")
+            );
+            assert!(!shown.contains("unauthorized") && !shown.contains('\n'));
+        }
+    }
+
+    #[test]
+    fn a_sign_in_link_names_its_relay() {
+        assert_eq!(
+            parse_link("SIGN-7KQ2-M9XD-4TRW-B1ZP", "signin"),
+            (None, "SIGN-7KQ2-M9XD-4TRW-B1ZP".to_string())
+        );
+        assert_eq!(
+            parse_link(
+                " https://relay.example/join?signin=SIGN-7KQ2-M9XD-4TRW-B1ZP ",
+                "signin"
+            ),
+            (
+                Some("https://relay.example".to_string()),
+                "SIGN-7KQ2-M9XD-4TRW-B1ZP".to_string()
+            )
+        );
+        // An invite link is not a sign-in link.
+        assert_eq!(
+            parse_link(
+                "https://relay.example/join?invite=CHAN-7KQ2-M9XD-4TRW",
+                "signin"
+            )
+            .0,
+            None
+        );
+    }
+
+    #[test]
     fn being_rate_limited_reads_as_a_sentence() {
         use backchannel_core::{Code, Error};
         let slow = Error::new(
@@ -792,8 +1016,23 @@ mod tests {
             ),
             _ => panic!("not post"),
         }
+        assert!(matches!(parse(&["rotate"]), Ok(Cmd::Rotate { now: false })));
+        assert!(matches!(
+            parse(&["rotate", "--now"]),
+            Ok(Cmd::Rotate { now: true })
+        ));
+        assert!(matches!(
+            parse(&["rotate-hook", "01m7y1wg6b60", "--now"]),
+            Ok(Cmd::RotateHook { now: true, .. })
+        ));
         for args in [
-            &["release", "01JD"][..],
+            &["tokens"][..],
+            &["new-token", "--note", "office laptop"],
+            &["revoke-token", "7KQ2M9XD"],
+            &["reset-tokens", "bob"],
+            &["signin", "SIGN-7KQ2-M9XD-4TRW-B1ZP"],
+            &["hooks"],
+            &["release", "01JD"],
             &["retract", "01JD"],
             &["unsubscribe", "ops/**"],
             &["jobs"],
