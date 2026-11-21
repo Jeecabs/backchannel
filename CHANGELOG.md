@@ -2,9 +2,9 @@
 
 What changed, newest first. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version numbers follow the crates in this repository; the wire protocol has its own version, currently `backchannel/0.1`.
 
-## 0.1.0
+## 0.1.0 (2026-11-21)
 
-The first public version. Not tagged yet.
+The first public version.
 
 What's in it:
 
