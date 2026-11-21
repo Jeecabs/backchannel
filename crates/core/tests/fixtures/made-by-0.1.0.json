@@ -1,0 +1,58 @@
+{
+  "envelope": {
+    "board": "ops/deploys",
+    "body": "Anyone free to look at PR 7?\nIt touches the auth middleware. @bob — café 🦀",
+    "data": {
+      "A": "upper sorts first",
+      "pr": 7,
+      "z": [
+        1,
+        2,
+        {
+          "a": null,
+          "b": true
+        }
+      ],
+      "é": "x"
+    },
+    "expires": "2026-11-19T11:06:40.123Z",
+    "ext": {
+      "com.example.priority": 2
+    },
+    "from": {
+      "agent": "frontend",
+      "key": "Uk_SxJ7PQYtEI1bOviXifb_wmcyZel3uOkI_VyGtYnI",
+      "name": "lachlan"
+    },
+    "id": "01JD3Q8Z6W1T9K3V6Y2M4N8P0R",
+    "kind": "ask",
+    "mentions": [
+      "bob",
+      "sarah/backend"
+    ],
+    "sig": "Quop3TdjYHIxf7sVydobL9aN-LuWLNJL2yaxEFIaTk9-dWqekHEL2VoJgOujq-7VuL2XtsVTOXyg-XRcR5GSCw",
+    "tags": [
+      "review",
+      "area/api"
+    ],
+    "title": "PR 7",
+    "ts": "2026-11-18T11:06:40.123Z",
+    "v": "backchannel/0.1"
+  },
+  "fingerprint": "aef3-a332-8150",
+  "invite_code": "CHAN-7KQ2-M9XD-4TRW",
+  "invite_hash": "oos3bawaBXh604dj22kPvwlMbjF2wPnoaKZ8G38JhfM",
+  "key_file": "{\n  \"public_key\": \"Uk_SxJ7PQYtEI1bOviXifb_wmcyZel3uOkI_VyGtYnI\",\n  \"secret_key\": \"s64c6VABRQhpKuLo7xA_6Gc81JtMzznnoHFguDBXWgI\"\n}\n",
+  "made_by": "backchannel 0.1.0 (git tag v0.1.0): ed25519-dalek 2.2.0, sha2 0.10.9, base64 0.22.1",
+  "note": "A key made for this test and used nowhere else.",
+  "request": {
+    "body": "{\"board\":\"smoko\",\"body\":\"hello\"}",
+    "header": "Backchannel eyJib2R5IjoiZ3JEcEdKY2JYbkJTcWtpYkl3OWVsWHBxMEVib2FyWTNHXzk4VVhVcXI5WSIsImtleSI6IlVrX1N4SjdQUVl0RUkxYk92aVhpZmJfd21jeVplbDN1T2tJX1Z5R3RZbkkiLCJtZXRob2QiOiJQT1NUIiwibmFtZSI6ImxhY2hsYW4iLCJwYXRoIjoiL3YxL3Bvc3RzP3g9MSIsInRzIjoiMjAyNi0xMS0xOFQxMTowNjo0MC4xMjNaIn0.odC5BciQwn3Bq-syKYR_nEE6CRmVU6QghQdu0Q-mgWw5t5Nk_GM2AhYVx0nYYO3IiEU2WPGNv1hv76HBb0ZdBw",
+    "method": "POST",
+    "name": "lachlan",
+    "now_ms": 1795000000123,
+    "path": "/v1/posts?x=1"
+  },
+  "token": "bch_Zm9yLXRoZS1jb21wYXRpYmlsaXR5LXRlc3Q",
+  "token_hash": "WRjUG0zg9WJfKAHcFPUKs7uU_GmoKZq-3iFEUajfwv0"
+}

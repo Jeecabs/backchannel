@@ -1,0 +1,11 @@
+# Settings for `gitleaks`, on top of its defaults.
+#
+# The one file excused here holds a signing key, a token and hashes that were
+# made for a test and are used nowhere else: see
+# crates/core/tests/compat_0_1_0.rs.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "A fixture of test-only credentials"
+paths = ['''crates/core/tests/fixtures/made-by-0\.1\.0\.json''']
