@@ -5,3 +5,4 @@ crates/relay/.dev.vars
 node_modules
 .DS_Store
 viewer/static/dl
+.hallmark/

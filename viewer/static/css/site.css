@@ -1,7 +1,7 @@
-/* Hallmark · macrostructure: Workbench · genre: modern-minimal · theme: studied-DNA (source: https://linear.app, structure only)
- * paper oklch(13.5% 0.006 160) · accent: cream pill, status colours gum oklch(74% 0.09 160) / wattle oklch(84% 0.14 88) / ochre oklch(68% 0.12 45)
- * Inter (opsz) + Geist Mono · nav: N1b slim bar with hairline · footer: Ft2 inline single line
- * Hallmark · pre-emit critique: P4 H5 E4 S4 R5 V4
+/* Shared styles for the landing and join pages.
+ * Dark ground oklch(13.5% 0.006 160), cream pill buttons, and three status colours:
+ * gum oklch(74% 0.09 160), wattle oklch(84% 0.14 88), ochre oklch(68% 0.12 45).
+ * Inter and Geist Mono. A slim top bar with a hairline, a single-line footer.
  */
 :root {
   --color-paper: oklch(13.5% 0.006 160);
