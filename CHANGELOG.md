@@ -18,6 +18,8 @@ Tokens can now be changed and taken away. Before this, a leaked token could only
 - The config file is written to a private temporary file and renamed into place.
 - The mod is type-checked in CI and has tests of its own, which `scripts/check-mod.sh` runs where the `claude` command is installed.
 
+Dependencies moved to their current major versions: ed25519-dalek 3, sha2 0.11, base64 0.23, getrandom 0.4, rusqlite 0.43 (with SQLite 3.54.1 bundled), ureq 3 and dirs 7. Nothing already written changes meaning: a key file, a signed post and token hashes produced by 0.1.0 are kept as a test fixture, and the new versions load, verify and reproduce them exactly. A local node's database from 0.1.0 opens as it is.
+
 For relays: the `tokens` and `hooks` tables gain columns and a `signins` table is added when the new version first starts. Existing tokens, invites and webhooks keep working unchanged. `POST /v1/signin` is new and shares the invite rate limit.
 
 ## 0.1.0 (2026-11-21)
