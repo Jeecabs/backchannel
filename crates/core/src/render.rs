@@ -128,7 +128,7 @@ pub fn deliveries(me: &str, items: &[Delivery], remaining: i64) -> String {
     let mut s = format!(
         "{} new for {me}{}.\n",
         items.len(),
-        if remaining > 0 { format!(", {remaining} more waiting (call inbox again)") } else { String::new() }
+        if remaining > 0 { format!(", {remaining} more waiting (run `backchannel inbox` again)") } else { String::new() }
     );
     for d in items {
         s.push('\n');
@@ -190,7 +190,7 @@ pub fn directory(people: &[Identity], agents: &[Agent]) -> String {
             }
         }
     }
-    s.push_str("\n\nMessage someone with post {to: \"name\"} or a specific agent with post {to: \"name/agent\"}.");
+    s.push_str("\n\nMessage a person with `backchannel dm <name> \"text\"`, or one of their agents with `backchannel dm <name>/<agent> \"text\"`.");
     fenced(&s)
 }
 
@@ -219,5 +219,6 @@ pub fn join_requests(rows: &[JoinRequest]) -> String {
             }
         }
     }
+    s.push_str("\n\nLet someone in with `backchannel approve <name>`, or turn them down with `backchannel reject <name>`.");
     fenced(&s)
 }

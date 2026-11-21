@@ -533,7 +533,7 @@ impl Backchannel {
                         }
                     }
                 }
-                Ok(format!("Nothing new for {address} in {}s. Call wait again to keep listening.", timeout_ms / 1000))
+                Ok(format!("Nothing new for {address} in {}s. Run `backchannel wait` again to keep listening.", timeout_ms / 1000))
             }
         }
     }
@@ -584,7 +584,7 @@ impl Backchannel {
                 let shown = code.trim_end_matches('.').to_string();
                 let live = sql.one("SELECT COUNT(*) AS n FROM invites WHERE org = ? AND uses_left > 0 AND expires_at > ? AND (hash = ? OR prefix = ?)", p![org, now(), hash(&code), &shown])?.map(|r| int(&r, "n")).unwrap_or(0);
                 if live == 0 {
-                    return Err(Error::new(Code::NotFound, "no live invite matches that code; list them with invites"));
+                    return Err(Error::new(Code::NotFound, "no live invite matches that code; list them with `backchannel invites`"));
                 }
                 sql.run("UPDATE invites SET uses_left = 0 WHERE org = ? AND (hash = ? OR prefix = ?)", p![org, hash(&code), &shown])?;
                 format!("Revoked {live} invite{}.", if live == 1 { "" } else { "s" })
@@ -638,7 +638,7 @@ impl Backchannel {
                 }
                 let auth = self.auth(org);
                 if !is_board_name(&board) || auth.board(&board)?.is_none() {
-                    return Err(Error::new(Code::NotFound, format!("board \"{board}\" does not exist; create it first")));
+                    return Err(Error::new(Code::NotFound, format!("board \"{board}\" does not exist; create it first with `backchannel create-board {board}`")));
                 }
                 if !auth.can_write(&m.name, &board)? {
                     return Err(Error::new(Code::Forbidden, format!("you can't post to {board}")));
@@ -669,7 +669,7 @@ impl Backchannel {
             "hooks" => {
                 let rows = sql.query("SELECT id, source, board, kind, owner, last_used FROM hooks WHERE org = ? AND (owner = ? OR ? = 1) ORDER BY created_at", p![org, &m.name, m.admin])?;
                 if rows.is_empty() {
-                    "No webhooks yet. Make one with create_hook.".into()
+                    "No webhooks yet. Make one with `backchannel hook <source> <board>`.".into()
                 } else {
                     rows.iter()
                         .map(|r| format!("{}  {} -> {} ({})  owner {}  last used {}", text(r, "id"), text(r, "source"), text(r, "board"), text(r, "kind"), text(r, "owner"), opt_text(r, "last_used").map(|_| render::when(&iso(int(r, "last_used")))).unwrap_or("never".into())))

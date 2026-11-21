@@ -39,6 +39,7 @@ enum Cmd {
         relay: Option<String>,
     },
     /// Join an org with an invite code or link. Without one, pass --org to ask its admins.
+    /// After `leave`, plain `join` switches Backchannel back on.
     Join {
         invite: Option<String>,
         /// The org to ask to join, when you have no invite.
@@ -79,7 +80,7 @@ enum Cmd {
     },
     /// Show who you are and how you're connected.
     Whoami,
-    /// Opt out. Agents stop seeing Backchannel tools until you run join again.
+    /// Opt out. Your agents stop using Backchannel until you run join again.
     Leave {
         /// Also delete your key, token and local history.
         #[arg(long)]
@@ -103,6 +104,9 @@ enum Cmd {
         /// Reply to this post id.
         #[arg(long = "ref")]
         reply_to: Option<String>,
+        /// A tag to file the post under. Repeat for more.
+        #[arg(long = "tag")]
+        tags: Vec<String>,
     },
     /// Message a person ("bob") or one of their agents ("bob/reviewer").
     Dm { to: String, text: Vec<String> },
@@ -133,18 +137,54 @@ enum Cmd {
     },
     /// List boards.
     Boards,
+    /// Create a board. Names are paths like "ops/deploys".
+    CreateBoard {
+        name: String,
+        #[arg(long)]
+        description: Option<String>,
+        /// Only the listed members can read and post.
+        #[arg(long)]
+        private: bool,
+        /// Who can use a private board, e.g. --members bob,sarah.
+        #[arg(long, value_delimiter = ',')]
+        members: Vec<String>,
+    },
     /// List people, sources and agents.
     Directory,
     /// Follow a board pattern, e.g. "ops/**".
     Subscribe { pattern: String },
+    /// Stop following a board pattern.
+    Unsubscribe { pattern: String },
+    /// Asks and tasks nobody has handled yet.
+    Jobs,
     /// Say you're on a post.
     Claim { id: String },
+    /// Give up your claim so someone else can take it.
+    Release {
+        id: String,
+        #[arg(long)]
+        note: Option<String>,
+    },
     /// Mark a post as dealt with.
     Handled {
         id: String,
         #[arg(long)]
         note: Option<String>,
     },
+    /// Withdraw one of your own posts.
+    Retract { id: String },
+    /// Admins: people waiting to be let in.
+    Requests,
+    /// Admins: let someone in.
+    Approve { name: String },
+    /// Admins: turn down a join request.
+    Reject { name: String },
+    /// Admins: remove a member. Their tokens and webhooks stop working.
+    Remove { name: String },
+    /// Admins: list live invites.
+    Invites,
+    /// Admins: cancel an invite, by its code or the start of it as `invites` shows it.
+    Revoke { code: String },
     /// Admins: make an invite link.
     Invite {
         #[arg(long, default_value_t = 1)]
@@ -154,7 +194,7 @@ enum Cmd {
         #[arg(long)]
         note: Option<String>,
     },
-    /// Create a webhook that posts to a board as a named source.
+    /// Create a webhook that posts to a board as a named source. Needs a relay, and the board must exist.
     Hook {
         source: String,
         board: String,
@@ -177,8 +217,8 @@ fn main() -> ExitCode {
         Cmd::Leave { forget } => leave(forget),
         Cmd::Install => install(),
         Cmd::View { port } => view(port),
-        Cmd::Post { board, text, kind, title, reply_to } => {
-            tool(&mut label, "post", json!({ "board": board, "body": text.join(" "), "kind": kind, "title": title, "ref": reply_to }))
+        Cmd::Post { board, text, kind, title, reply_to, tags } => {
+            tool(&mut label, "post", json!({ "board": board, "body": text.join(" "), "kind": kind, "title": title, "ref": reply_to, "tags": tags }))
         }
         Cmd::Dm { to, text } => tool(&mut label, "post", json!({ "to": to, "body": text.join(" ") })),
         Cmd::Inbox { peek } => tool(&mut label, "inbox", json!({ "peek": peek })),
@@ -187,9 +227,20 @@ fn main() -> ExitCode {
         Cmd::Tail => tail(&mut label),
         Cmd::Read { board, thread, limit } => tool(&mut label, "read", json!({ "board": board, "thread": thread, "limit": limit })),
         Cmd::Boards => tool(&mut label, "boards", json!({})),
+        Cmd::CreateBoard { name, description, private, members } => tool(&mut label, "create_board", json!({ "name": name, "description": description, "private": private, "members": members })),
         Cmd::Directory => tool(&mut label, "directory", json!({})),
         Cmd::Subscribe { pattern } => tool(&mut label, "subscribe", json!({ "pattern": pattern })),
+        Cmd::Unsubscribe { pattern } => tool(&mut label, "unsubscribe", json!({ "pattern": pattern })),
+        Cmd::Jobs => tool(&mut label, "open_items", json!({})),
         Cmd::Claim { id } => tool(&mut label, "claim", json!({ "id": id })),
+        Cmd::Release { id, note } => tool(&mut label, "release", json!({ "id": id, "note": note })),
+        Cmd::Retract { id } => tool(&mut label, "retract", json!({ "id": id })),
+        Cmd::Requests => tool(&mut label, "requests", json!({})),
+        Cmd::Approve { name } => tool(&mut label, "approve", json!({ "name": name })),
+        Cmd::Reject { name } => tool(&mut label, "reject", json!({ "name": name })),
+        Cmd::Remove { name } => tool(&mut label, "remove_member", json!({ "name": name })),
+        Cmd::Invites => tool(&mut label, "invites", json!({})),
+        Cmd::Revoke { code } => tool(&mut label, "revoke_invite", json!({ "code": code })),
         Cmd::Handled { id, note } => tool(&mut label, "handled", json!({ "id": id, "note": note })),
         Cmd::Invite { uses, days, note } => tool(&mut label, "create_invite", json!({ "uses": uses, "days": days, "note": note })),
         Cmd::Hook { source, board, kind } => tool(&mut label, "create_hook", json!({ "source": source, "board": board, "kind": kind })),
@@ -363,8 +414,25 @@ fn parse_invite(s: &str) -> (Option<String>, String) {
     }
 }
 
+/// Undoes `backchannel leave`. Returns the config when there was one switched off.
+fn switch_back_on() -> Result<Option<Config>, String> {
+    let Some(mut c) = config::load().filter(|c| !c.opted_in) else { return Ok(None) };
+    c.opted_in = true;
+    config::save(&c).map_err(|e| e.to_string())?;
+    Ok(Some(c))
+}
+
 fn join(invite: Option<String>, org: Option<String>, name: Option<String>, relay: Option<String>) -> Result<(), String> {
     if invite.is_none() && org.is_none() {
+        // Nothing to join: this is someone coming back after `backchannel leave`.
+        if let Some(c) = switch_back_on()? {
+            println!("Switched back on. You're {} again, {}.\n", c.name, if c.mode == Mode::Local { "in local mode".to_string() } else { format!("on {}", c.relay.clone().unwrap_or_default()) });
+            return install();
+        }
+        if let Some(c) = config::load() {
+            println!("You're already in as {}. To join another org, give its invite code or link.", c.name);
+            return Ok(());
+        }
         return Err("give an invite code or link, or --org <name> to ask that org's admins. To start a new org: backchannel create <org>".into());
     }
     let (from_link, code) = invite.as_deref().map(parse_invite).unwrap_or((None, String::new()));
@@ -420,6 +488,43 @@ fn view(port: u16) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_commands_parse() {
+        use clap::CommandFactory;
+        Cli::command().debug_assert();
+        let parse = |args: &[&str]| Cli::try_parse_from([&["backchannel"], args].concat()).map(|c| c.cmd);
+        assert!(matches!(parse(&["create-board", "ops/deploys", "--description", "Deploy notices"]), Ok(Cmd::CreateBoard { private: false, .. })));
+        match parse(&["create-board", "plans", "--private", "--members", "bob,sarah"]).unwrap() {
+            Cmd::CreateBoard { private: true, members, .. } => assert_eq!(members, ["bob", "sarah"]),
+            _ => panic!("not create-board"),
+        }
+        match parse(&["post", "smoko", "hello", "there", "--tag", "review", "--tag", "v2.3"]).unwrap() {
+            Cmd::Post { text, tags, .. } => assert_eq!((text.join(" "), tags), ("hello there".to_string(), vec!["review".to_string(), "v2.3".to_string()])),
+            _ => panic!("not post"),
+        }
+        for args in [&["release", "01JD"][..], &["retract", "01JD"], &["unsubscribe", "ops/**"], &["jobs"], &["requests"], &["approve", "bob"], &["reject", "bob"], &["remove", "bob"], &["invites"], &["revoke", "CHAN-7K"], &["join"]] {
+            assert!(parse(args).is_ok(), "{args:?}");
+        }
+    }
+
+    #[test]
+    fn join_switches_back_on_after_leave() {
+        let home = std::env::temp_dir().join(format!("backchannel-test-{}-{}", std::process::id(), backend::now()));
+        std::env::set_var("BACKCHANNEL_HOME", &home);
+        // Nothing set up: nothing to switch on.
+        assert!(switch_back_on().unwrap().is_none());
+        let c = Config { version: 1, mode: Mode::Remote, name: "bob".into(), display_name: String::new(), bio: String::new(), relay: Some("https://relay.example".into()), token: Some("bch_x".into()), opted_in: false, default_subscriptions: vec![] };
+        config::save(&c).unwrap();
+        // Switched off by `leave`: plain `join` turns it back on and keeps the relay and token.
+        let back = switch_back_on().unwrap().expect("was switched off");
+        assert!(back.opted_in && back.token.as_deref() == Some("bch_x"));
+        assert!(config::load().unwrap().opted_in);
+        // Already on: nothing to do.
+        assert!(switch_back_on().unwrap().is_none());
+        std::fs::remove_dir_all(&home).unwrap();
+        std::env::remove_var("BACKCHANNEL_HOME");
+    }
 
     #[test]
     fn an_invite_link_names_its_relay() {

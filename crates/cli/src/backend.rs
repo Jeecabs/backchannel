@@ -15,6 +15,9 @@ pub fn now() -> i64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as i64
 }
 
+/// Tools a relay adds. A local node has no members to invite and nothing to receive webhooks.
+const RELAY_ONLY: &[&str] = &["create_hook", "hooks", "delete_hook", "create_invite", "invites", "revoke_invite", "requests", "approve", "reject", "remove_member"];
+
 pub struct Local {
     pub auth: Authority<Sqlite>,
     pub me: Me,
@@ -47,7 +50,8 @@ impl Local {
         let out = tools::call(&mut ctx, tool, args)?;
         *label = ctx.label.clone();
         match out {
-            None => Err(Error::new(Code::NotFound, format!("no tool called {tool} in local mode"))),
+            None if RELAY_ONLY.contains(&tool) => Err(Error::new(Code::NotFound, "that needs a relay: webhooks, invites and approvals don't exist in local mode, where everything stays on this machine")),
+            None => Err(Error::new(Code::NotFound, format!("no tool called {tool}"))),
             Some(Outcome::Text(t)) => Ok(t),
             Some(Outcome::Wait { timeout_ms }) => {
                 let addr = ctx.address();
@@ -59,7 +63,7 @@ impl Local {
                         return self.call(label, client, "inbox", &json!({}));
                     }
                 }
-                Ok(format!("Nothing new for {addr} in {}s. Call wait again to keep listening.", timeout_ms / 1000))
+                Ok(format!("Nothing new for {addr} in {}s. Run `backchannel wait` again to keep listening.", timeout_ms / 1000))
             }
         }
     }
@@ -138,7 +142,7 @@ impl Backend {
     pub fn open() -> Result<Backend> {
         let c = config::load().ok_or_else(|| Error::new(Code::NotOptedIn, NOT_SET_UP))?;
         if !c.opted_in {
-            return Err(Error::new(Code::NotOptedIn, "Backchannel is switched off on this machine. Run `backchannel join` to turn it back on."));
+            return Err(Error::new(Code::NotOptedIn, "Backchannel is switched off on this machine. Only the user can turn it back on, by running `backchannel join`."));
         }
         match c.mode {
             Mode::Local => Ok(Backend::Local(Local::open(&c)?)),

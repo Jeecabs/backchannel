@@ -108,7 +108,7 @@ impl<'a, S: Sql> Ctx<'a, S> {
         let h = self.auth.handling(&id)?;
         let state = render::handling_line(&h).unwrap_or_else(|| "open".into());
         let what = match kind {
-            Kind::Claim => "Claimed. Others will see you're on it. Call handled when finished, or release if you stop.",
+            Kind::Claim => "Claimed. Others will see you're on it. Run `backchannel handled <id>` when finished, or `backchannel release <id>` if you stop.",
             Kind::Release => "Released. It's open for someone else.",
             Kind::Handled => "Marked handled. Everyone can see who dealt with it.",
             _ => "Done.",
@@ -160,7 +160,7 @@ pub fn call<S: Sql>(ctx: &mut Ctx<'_, S>, name: &str, args: &Value) -> Result<Op
             let subs = ctx.inbox.subscriptions(&agent.address)?;
             let open = ctx.auth.open_items(Some(&me), 50)?.len();
             Outcome::Text(format!(
-                "You are {addr}{display}.\nYour agents share the name {me}; other agents see {addr} on what you post.\nSubscribed to: {subs}\nUnread: {unread}\nOpen asks and tasks you can see: {open}\n\nTips: inbox shows what's new for you. post with board to broadcast, or with to to message one person or agent. claim before working on an ask or task, then handled when done.",
+                "You are {addr}{display}.\nYour agents share the name {me}; other agents see {addr} on what you post.\nSubscribed to: {subs}\nUnread: {unread}\nOpen asks and tasks you can see: {open}\n\nTips: `backchannel inbox` shows what's new for you. `backchannel post <board> \"text\"` tells a board, and `backchannel dm <name> \"text\"` messages one person or agent. Run `backchannel claim <id>` before working on an ask or task, then `backchannel handled <id>` when done.",
                 addr = agent.address,
                 display = id.as_ref().filter(|i| !i.display_name.is_empty()).map(|i| format!(" ({})", clean_line(&i.display_name))).unwrap_or_default(),
                 subs = if subs.is_empty() { "nothing yet".into() } else { subs.iter().map(|s| s.pattern.clone()).collect::<Vec<_>>().join(", ") },
@@ -201,7 +201,7 @@ pub fn call<S: Sql>(ctx: &mut Ctx<'_, S>, name: &str, args: &Value) -> Result<Op
                 (Some(to), _) => {
                     let (name, agent) = parse_address(&to).ok_or_else(|| Error::new(Code::Invalid, format!("\"{to}\" is not a name or name/agent")))?;
                     if ctx.auth.identity(&name)?.is_none() {
-                        return err(Code::NotFound, format!("nobody called \"{name}\" is here; check directory"));
+                        return err(Code::NotFound, format!("nobody called \"{name}\" is here; check `backchannel directory`"));
                     }
                     (format!("@{name}"), if agent.is_some() { vec![to.trim_start_matches('@').to_string()] } else { vec![] })
                 }
@@ -217,7 +217,7 @@ pub fn call<S: Sql>(ctx: &mut Ctx<'_, S>, name: &str, args: &Value) -> Result<Op
             mentions.extend(opt_list(args, "mentions").unwrap_or_default());
             let kind = opt_str(args, "kind").map(|k| Kind::parse(&k).ok_or_else(|| Error::new(Code::Invalid, format!("unknown kind \"{k}\"")))).transpose()?;
             if kind.is_some_and(|k| k.is_action()) {
-                return err(Code::Invalid, "use the claim, release, handled and retract tools for those");
+                return err(Code::Invalid, "use `backchannel claim`, `release`, `handled` and `retract` for those");
             }
             let p = ctx.publish(Draft {
                 board,
