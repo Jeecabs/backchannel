@@ -130,6 +130,21 @@ impl Local {
 const SLOW_DOWN: &str =
     "Slow down: the relay is getting too many requests from you. Try again in a minute.";
 
+/// What a request comes back as: a response whatever its status, or the
+/// reason there wasn't one.
+type Answer = std::result::Result<ureq::http::Response<ureq::Body>, ureq::Error>;
+
+/// The HTTP client every request goes through. A relay answers errors in
+/// JSON with a 4xx or 5xx status, so those are read like any other reply and
+/// not turned into a transport error.
+fn agent() -> ureq::Agent {
+    ureq::Agent::config_builder()
+        .timeout_global(Some(Duration::from_secs(75)))
+        .http_status_as_error(false)
+        .build()
+        .into()
+}
+
 pub struct Remote {
     pub relay: String,
     pub token: String,
@@ -141,16 +156,13 @@ impl Remote {
         Remote {
             relay: relay.trim_end_matches('/').to_string(),
             token: token.to_string(),
-            agent: ureq::AgentBuilder::new()
-                .timeout(Duration::from_secs(75))
-                .build(),
+            agent: agent(),
         }
     }
 
-    fn parse(res: std::result::Result<ureq::Response, ureq::Error>) -> Result<Value> {
-        let resp = match res {
+    fn parse(res: Answer) -> Result<Value> {
+        let mut resp = match res {
             Ok(r) => r,
-            Err(ureq::Error::Status(_, r)) => r,
             Err(e) => {
                 return Err(Error::new(
                     Code::Unavailable,
@@ -159,8 +171,8 @@ impl Remote {
             }
         };
         // A 429 can come from in front of the relay, with a body that isn't ours.
-        let limited = resp.status() == 429;
-        let v: Value = match resp.into_json() {
+        let limited = resp.status().as_u16() == 429;
+        let v: Value = match resp.body_mut().read_json() {
             Ok(v) => v,
             Err(_) if limited => return Err(Error::new(Code::RateLimited, SLOW_DOWN)),
             Err(e) => {
@@ -199,10 +211,10 @@ impl Remote {
         let v = Self::parse(
             self.agent
                 .post(&format!("{}/v1/call/{tool}", self.relay))
-                .set("authorization", &format!("Bearer {}", self.token))
-                .set("x-backchannel-agent", label)
-                .set("x-backchannel-client", client)
-                .send_json(args.clone()),
+                .header("authorization", &format!("Bearer {}", self.token))
+                .header("x-backchannel-agent", label.as_str())
+                .header("x-backchannel-client", client)
+                .send_json(args),
         )?;
         if let Some(l) = v["label"].as_str() {
             *label = l.to_string();
@@ -217,9 +229,9 @@ impl Remote {
         Self::parse(
             self.agent
                 .get(&format!("{}/v1/unread", self.relay))
-                .set("authorization", &format!("Bearer {}", self.token))
-                .set("x-backchannel-agent", label)
-                .set("x-backchannel-client", client)
+                .header("authorization", &format!("Bearer {}", self.token))
+                .header("x-backchannel-agent", label)
+                .header("x-backchannel-client", client)
                 .call(),
         )
     }
@@ -227,13 +239,16 @@ impl Remote {
     /// An unauthenticated POST: signing up, or claiming an org.
     pub fn post(relay: &str, path: &str, body: &Value) -> Result<Value> {
         Self::parse(
-            ureq::post(&format!("{}{path}", relay.trim_end_matches('/'))).send_json(body.clone()),
+            agent()
+                .post(&format!("{}{path}", relay.trim_end_matches('/')))
+                .send_json(body),
         )
     }
 
     pub fn signup_status(relay: &str, id: &str, secret: &str) -> Result<Value> {
         Self::parse(
-            ureq::get(&format!("{}/v1/signup/status", relay.trim_end_matches('/')))
+            agent()
+                .get(&format!("{}/v1/signup/status", relay.trim_end_matches('/')))
                 .query("id", id)
                 .query("secret", secret)
                 .call(),
