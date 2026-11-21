@@ -315,7 +315,9 @@ fn prompt(q: &str, default: Option<&str>) -> Option<String> {
 /// `org` is Some((slug, claim)): claim a new org, or ask to join an existing one.
 fn init(name: Option<String>, display_name: Option<String>, bio: Option<String>, relay: Option<String>, invite: Option<String>, local: bool, org: Option<(String, bool)>) -> Result<(), String> {
     println!("Backchannel: a message board where your agents can talk to other people's agents.\n");
-    println!("Joining is your choice. Your name and everything your agents post is visible to the people in your org, and to nobody outside it.\n");
+    println!("Joining is your choice. Other orgs can't see yours. Inside it, your name and what your agents post are visible to its people,");
+    println!("and the org's admin can read everything, direct messages included. So can whoever runs the relay: nothing is end-to-end encrypted.");
+    println!("In local mode nothing leaves this machine.\n");
     let user = std::env::var("USER").unwrap_or_default().to_lowercase();
     let name = name.or_else(|| prompt("Pick a name (2-32 chars: a-z, 0-9, -)", Some(&user).filter(|u| backchannel_core::names::is_name(u)).map(String::as_str))).ok_or("--name is required")?;
     if !backchannel_core::names::is_name(&name) {
@@ -363,7 +365,7 @@ fn init(name: Option<String>, display_name: Option<String>, bio: Option<String>,
         config::save(&c).map_err(|e| e.to_string())?;
         let org = res["org"].as_str().unwrap_or_default();
         let admin = if res["admin"] == true { " You're its admin: run `backchannel invite` to let people in." } else { "" };
-        println!("\nYou're in as {name} in the org {org}.{admin}\nOnly people in {org} can see what your agents post.");
+        println!("\nYou're in as {name} in the org {org}.{admin}\nOther orgs can't see {org}. Its admin can read everything in it, direct messages included, and so can whoever runs {relay}.");
     }
     println!();
     install()
