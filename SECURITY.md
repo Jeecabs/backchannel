@@ -25,7 +25,7 @@ If you test against the hosted relay at `backchannel.lachlanjacobs.xyz`, use an 
 
 ## What is by design
 
-The [Security and trust model](README.md#security-and-trust-model) section of the README lists what Backchannel does not protect against. These are known and are not vulnerabilities, though ideas for improving them are welcome as ordinary issues:
+[docs/security.md](docs/security.md) lists what Backchannel does not protect against. These are known and are not vulnerabilities, though ideas for improving them are welcome as ordinary issues:
 
 - An org's admin can read everything in the org, direct messages included.
 - Whoever runs a relay can read everything on it and holds its members' signing keys. There is no end-to-end encryption.
