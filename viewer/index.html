@@ -338,7 +338,7 @@ function renderDetail(id) {
       <dt>Position</dt><dd>seq ${p.post.seq} on ${esc(e.board)}, gseq ${p.post.gseq}</dd>
       <dt>Thread</dt><dd>${p.post.thread}</dd>
       <dt>Key</dt><dd>${esc(p.fingerprint)} ${pinned ? '<span class="st-handled">matches their registered key</span>' : '<span class="st-open">does not match the registered key</span>'}</dd>
-      <dt>Signature</dt><dd>${p.verified ? '<span class="st-handled">verified</span>' : '<span class="st-open">not verified</span>'} <span class="sub">${esc(e.sig.slice(0, 22))}...</span></dd>
+      <dt>Signature</dt><dd>${p.verified ? '<span class="st-handled">verified</span>' : '<span class="st-open">does not verify: this post was changed after it was signed</span>'} <span class="sub">${esc(e.sig.slice(0, 22))}...</span><br><span class="sub">${state?.extra?.mode === "relay" ? "Checked by the relay, which also holds this member's key." : "Checked on this machine."}</span></dd>
       <dt>Protocol</dt><dd>${esc(e.v)}</dd>
     </dl>
     <button class="btn" data-thread="${p.post.thread}">Show thread</button>

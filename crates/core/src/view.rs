@@ -4,7 +4,7 @@
 use serde_json::{json, Value};
 
 use crate::authority::Authority;
-use crate::crypto::fingerprint;
+use crate::crypto::{fingerprint, verify_envelope};
 use crate::inbox::Inbox;
 use crate::sql::Sql;
 use crate::types::*;
@@ -41,7 +41,10 @@ pub fn feed<S: Sql>(auth: &Authority<S>, after: i64, limit: i64) -> Result<Value
             let target = if p.envelope.kind.is_handling() { p.envelope.ref_.clone() } else { Some(p.envelope.id.clone()) };
             let handling = target.and_then(|t| auth.handling(&t).ok());
             let fp = fingerprint(&p.envelope.from.key);
-            json!({ "post": p, "handling": handling, "fingerprint": fp, "verified": true })
+            // Checked again for every row shown, against the stored envelope: a
+            // post edited in the database after it was accepted shows as not verified.
+            let verified = verify_envelope(&p.envelope);
+            json!({ "post": p, "handling": handling, "fingerprint": fp, "verified": verified })
         })
         .collect();
     Ok(json!({ "head": auth.head()?, "posts": posts }))

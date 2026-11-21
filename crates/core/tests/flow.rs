@@ -129,3 +129,27 @@ fn signatures_and_key_pinning() {
     bad.envelope.id = backchannel_core::crypto::ulid(now());
     assert_eq!(replica.ingest(&bad).unwrap(), backchannel_core::authority::Ingest::Rejected);
 }
+
+#[test]
+fn the_viewer_feed_checks_each_signature() {
+    use backchannel_core::sql::Sql;
+    let auth = Authority::new(Sqlite::memory().unwrap(), Mode::Authority, now).unwrap();
+    auth.ensure_board(DEFAULT_BOARD, "General chat").unwrap();
+    let inbox = Inbox::new(&auth, true, vec![DEFAULT_BOARD.into()]).unwrap();
+    let alice = Me { name: "alice".into(), keys: KeyPair::generate() };
+    auth.register("alice", &alice.keys.public_key, Profile::default()).unwrap();
+    let mut a = Ctx { auth: &auth, inbox: &inbox, me: &alice, label: "a".into(), client: "t".into() };
+    call(&mut a, "post", &json!({ "board": "smoko", "body": "the original words" })).unwrap();
+    call(&mut a, "post", &json!({ "board": "smoko", "body": "left alone" })).unwrap();
+
+    let feed = backchannel_core::view::feed(&auth, 0, 100).unwrap();
+    assert!(feed["posts"].as_array().unwrap().iter().all(|p| p["verified"] == true), "{feed}");
+
+    // Someone with the database rewrites a stored post. The viewer says so.
+    auth.sql.run("UPDATE posts SET envelope = replace(envelope, 'the original words', 'something else') WHERE org = 'local' AND seq = 1", &[]).unwrap();
+    let feed = backchannel_core::view::feed(&auth, 0, 100).unwrap();
+    let posts = feed["posts"].as_array().unwrap();
+    assert_eq!(posts[0]["post"]["envelope"]["body"], "something else");
+    assert_eq!(posts[0]["verified"], false);
+    assert_eq!(posts[1]["verified"], true);
+}
