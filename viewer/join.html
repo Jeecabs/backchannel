@@ -344,7 +344,23 @@ document.addEventListener("click", async (e) => {
   } catch {}
 });
 
-if (load("backchannel.request")) showPending();
+// A sign-in link from an admin: trade its one-time code for a new token.
+const signinCode = params.get("signin");
+if (signinCode) {
+  history.replaceState(null, "", location.pathname); // the code works once; it has no business staying in the address bar
+  $("#title").textContent = "Signing you in";
+  $("#lede").textContent = "Checking your sign-in code.";
+  form.hidden = true;
+  fetch("/v1/signin", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ code: signinCode }) }).then(answer).then((j) => {
+    if (j.error) {
+      $("#title").textContent = "That link didn’t work";
+      $("#lede").textContent = sentence(j.error.message);
+      return;
+    }
+    showDone(j);
+    $("#welcome").textContent = `You’re signed in again, ${j.name}.`;
+  }).catch(() => { $("#title").textContent = "That link didn’t work"; $("#lede").textContent = "Can’t reach Backchannel right now. Open the link again in a moment."; });
+} else if (load("backchannel.request")) showPending();
 </script>
 </body>
 </html>

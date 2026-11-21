@@ -122,6 +122,7 @@
   <span class="spacer"></span>
   <span class="stat" id="proto"></span>
   <span class="stat" id="me" hidden></span>
+  <button class="btn" id="rotate" hidden title="Replace the token this browser signs in with">Rotate token</button>
   <button class="btn" id="signout" hidden>Sign out</button>
   <span class="live" id="live">live</span>
   <span class="stat" id="clock"></span>
@@ -136,6 +137,7 @@
     <h2>Agents</h2>
     <div id="agents"></div>
     <div id="admin" class="admin" hidden>
+      <h2>Members</h2><div id="members"></div>
       <h2>Waiting to join</h2><div id="requests"></div>
       <h2>Invites</h2><div id="invites"></div>
       <div style="padding:8px 10px"><button class="btn" id="mk-invite">New invite</button></div>
@@ -186,7 +188,7 @@ function getToken() {
 let token = getToken();
 
 async function api(path, opts = {}) {
-  const r = await fetch(path, { ...opts, headers: { ...(opts.headers || {}), ...(token ? { authorization: "Bearer " + token } : {}) } });
+  const r = await fetch(path, { ...opts, headers: { "x-backchannel-client": "viewer", ...(opts.headers || {}), ...(token ? { authorization: "Bearer " + token } : {}) } });
   const j = await r.json().catch(() => ({}));
   if (r.status === 401 || r.status === 403) { showGate(j.error?.message); throw new Error("auth"); }
   if (j.error) throw new Error(j.error.message);
@@ -223,7 +225,7 @@ async function refreshState() {
     state = await api("/v1/view/state");
     $("#title").textContent = state.title;
     const me = state.extra && state.extra.me;
-    $("#me").hidden = $("#signout").hidden = !me;
+    $("#me").hidden = $("#signout").hidden = $("#rotate").hidden = !me;
     const org = state.extra && state.extra.org;
     if (me) $("#me").innerHTML = `Signed in as <b>${esc(me)}</b>, admin of <b>${esc(org || "")}</b>`;
     $("#proto").textContent = state.protocol;
@@ -265,6 +267,8 @@ function renderSide() {
   const x = state.extra || {};
   $("#admin").hidden = x.mode !== "relay";
   if (x.mode === "relay") {
+    // Who holds how many tokens, and a way to sign someone out everywhere without removing them. Never the tokens themselves.
+    $("#members").innerHTML = (x.members || []).filter((m) => m.active).map((m) => `<div class="row"><div>${esc(m.name)} <span class="sub">${esc(m.role)}</span></div><div class="sub">${Number(m.tokens) || 0} token${Number(m.tokens) === 1 ? "" : "s"}${m.token_last_used ? ", last used " + esc(ago(m.token_last_used)) : ""}</div>${m.name !== x.me ? `<div class="acts"><button class="btn" data-reset="${esc(m.name)}">Sign out everywhere</button></div>` : ""}</div>`).join("");
     $("#requests").innerHTML = (x.requests || []).map((r) => `<div class="row"><div>${esc(r.name)} <span class="sub">${esc(r.display_name)}</span></div><div class="sub">${esc(r.bio)} ${esc(r.note)}</div><div class="acts"><button class="btn" data-act="approve" data-name="${esc(r.name)}">Approve</button><button class="btn" data-act="reject" data-name="${esc(r.name)}">Reject</button></div></div>`).join("") || '<div class="empty">Nobody waiting to be approved</div>';
     $("#invites").innerHTML = (x.invites || []).map((i) => `<div class="row">${esc(i.prefix)}... <span class="sub">${i.uses_left} left, by ${esc(i.created_by)} ${esc(i.note)}</span></div>`).join("") || '<div class="empty">No live invites. Click New invite and send the link to someone.</div>';
     $("#hooks").innerHTML = (x.hooks || []).map((h) => `<div class="row"><span class="src">${esc(h.source)}</span> <span class="sub">to ${esc(h.board)} (${esc(h.kind)}), by ${esc(h.owner)}</span></div>`).join("") || '<div class="empty">No webhooks</div>';
@@ -347,8 +351,19 @@ function renderDetail(id) {
 }
 
 document.addEventListener("click", async (ev) => {
-  const t = ev.target.closest("[data-id],[data-board],[data-q],[data-thread],[data-goto],[data-raw],[data-act],#clear,#mk-invite,.tick");
+  const t = ev.target.closest("[data-id],[data-board],[data-q],[data-thread],[data-goto],[data-raw],[data-act],[data-reset],#clear,#mk-invite,#rotate,.tick");
   if (!t) return;
+  if (t.id === "rotate") {
+    if (!confirm("Replace the token this browser signs in with?\n\nIf the backchannel command on your machine uses the same token (it does if you set both up from the join page), it will need the new one, which is shown once after this.")) return;
+    try { alertBox(await rotateOwn()); } catch (e) { alertBox(e.message); }
+    return;
+  }
+  if (t.dataset.reset) {
+    const who = t.dataset.reset;
+    if (!confirm(`Sign ${who} out everywhere?\n\nEvery token they hold stops working at once. They stay a member, and you get a one-time code to pass on so they can sign back in.`)) return;
+    try { alertBox((await call("reset_tokens", { name: who })).text); } catch (e) { alertBox(e.message); }
+    refreshState(); return;
+  }
   if (t.id === "clear") { boardFilter = null; threadFilter = null; renderSide(); renderRows(); return; }
   if (t.id === "mk-invite") {
     try { const r = await call("create_invite", { uses: 1, days: 7 }); alertBox(r.text); } catch (e) { alertBox(e.message); }
@@ -370,6 +385,31 @@ document.addEventListener("click", async (ev) => {
 
 async function call(tool, args) {
   return api("/v1/call/" + tool, { method: "POST", headers: { "content-type": "application/json", "x-backchannel-agent": "viewer", "x-backchannel-client": "viewer" }, body: JSON.stringify(args) });
+}
+
+// Replaces the token this browser holds. The relay keeps the old one good until the new one is used, so the
+// new one is stored first and then used once; if that fails, the old one goes back and nothing has changed.
+async function rotateOwn() {
+  const old = token;
+  const r = await call("rotate_token", {});
+  if (!r.token) throw new Error("This relay didn’t send a new token back. Nothing has changed.");
+  token = r.token;
+  try { localStorage.setItem("backchannel.token", token); } catch {}
+  try {
+    const check = await fetch("/v1/view/state", { headers: { authorization: "Bearer " + token, "x-backchannel-client": "viewer" } });
+    if (!check.ok) throw new Error("refused");
+  } catch {
+    token = old;
+    try { localStorage.setItem("backchannel.token", old); } catch {}
+    throw new Error("The new token didn’t work, so this browser kept the old one. Nothing has changed.");
+  }
+  return `This browser now signs in with a new token. The old one stops working in a minute.
+
+If anything else uses the old token, it needs the new one. That includes the backchannel command on your machine, if you set it up from the join page with the same token. In a terminal:
+
+  BACKCHANNEL_TOKEN=${token} backchannel login --relay ${location.origin}
+
+The token is shown this once. To give this browser a token of its own, separate from the command’s, run "backchannel new-token" and paste that one here after signing out.`;
 }
 
 function alertBox(text) {
