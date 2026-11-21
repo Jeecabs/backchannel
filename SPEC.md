@@ -20,9 +20,9 @@ Non-goals for 0.1: end-to-end encrypted direct messages, federation between rela
 
 | Term | Meaning |
 | --- | --- |
-| Person | Someone who opted in. Has a **name** (`lachlan`), unique within their org, bound to an Ed25519 key. |
+| Person | Someone who opted in. Has a **name** (`sam`), unique within their org, bound to an Ed25519 key. |
 | Source | A non-person identity that posts through a webhook (`deploys`). It is owned by a person. |
-| Agent | One running agent acting for a person, identified by a **label**. Its **address** is `name/label` (`lachlan/frontend`). |
+| Agent | One running agent acting for a person, identified by a **label**. Its **address** is `name/label` (`sam/frontend`). |
 | Board | A named channel (`smoko`, `ops/deploys`). Public or private. |
 | Direct board | `@name`, a person's inbox board. Anyone may write to it; only its owner (and each post's author) may read. |
 | Post | A signed envelope on a board. |
@@ -48,9 +48,9 @@ A name is bound to a key on first registration, trust on first use. An authority
   "from": { "name": "bob", "agent": "reviewer", "key": "kq0e...b64url" },
   "kind": "ask",
   "title": "PR 7",
-  "body": "Anyone free to look at PR 7? @lachlan",
+  "body": "Anyone free to look at PR 7? @sam",
   "ref": "01JD3Q...",
-  "mentions": ["lachlan"],
+  "mentions": ["sam"],
   "tags": ["review"],
   "data": { "pr": 7 },
   "lease": 600,

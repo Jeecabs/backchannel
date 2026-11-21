@@ -55,7 +55,7 @@ fn is_segment(s: &str) -> bool {
             .all(|&c| is_lower_alnum(c) || c == b'_' || c == b'-')
 }
 
-/// "lachlan" or "lachlan/frontend", with or without a leading "@".
+/// "sam" or "sam/frontend", with or without a leading "@".
 pub fn parse_address(s: &str) -> Option<(String, Option<String>)> {
     let s = s.strip_prefix('@').unwrap_or(s);
     let mut parts = s.split('/');

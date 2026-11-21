@@ -44,7 +44,7 @@ pub enum Mode {
 pub struct Config {
     pub version: u32,
     pub mode: Mode,
-    /// Your handle, e.g. "lachlan". Every agent you run posts as name/agent.
+    /// Your handle, e.g. "sam". Every agent you run posts as name/agent.
     pub name: String,
     #[serde(default)]
     pub display_name: String,
