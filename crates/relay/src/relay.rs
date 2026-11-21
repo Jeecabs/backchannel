@@ -348,8 +348,8 @@ impl Backchannel {
         Ok(Me { name: name.into(), keys })
     }
 
-    /// Creates the identity (with a relay-held key), membership and a token, all inside `org`.
-    fn admit(&self, org: &str, name: &str, display_name: &str, bio: &str, role: &str, invited_by: Option<&str>) -> R<String> {
+    /// Creates the identity (with a relay-held key) and the membership, all inside `org`.
+    fn admit(&self, org: &str, name: &str, display_name: &str, bio: &str, role: &str, invited_by: Option<&str>) -> R<()> {
         let auth = self.auth(org);
         if auth.identity(name)?.is_some() {
             return Err(Error::new(Code::Conflict, format!("the name \"{name}\" is taken in {org}")));
@@ -359,8 +359,14 @@ impl Backchannel {
         let sql = self.sql();
         sql.run("INSERT OR REPLACE INTO custody (org, name, seed) VALUES (?, ?, ?)", p![org, name, keys.secret_key])?;
         sql.run("INSERT OR REPLACE INTO members (org, name, role, invited_by, joined_at, active) VALUES (?, ?, ?, ?, ?, 1)", p![org, name, role, invited_by, now()])?;
+        Ok(())
+    }
+
+    /// A new bearer token for a member. Only its hash is kept: the token itself
+    /// exists in the response that hands it over and nowhere else.
+    fn mint_token(&self, org: &str, name: &str) -> R<String> {
         let token = secret("bch_");
-        sql.run("INSERT INTO tokens (hash, org, name, created_at) VALUES (?, ?, ?, ?)", p![hash(&token), org, name, now()])?;
+        self.sql().run("INSERT INTO tokens (hash, org, name, created_at) VALUES (?, ?, ?, ?)", p![hash(&token), org, name, now()])?;
         Ok(token)
     }
 
@@ -388,8 +394,8 @@ impl Backchannel {
         }
         self.sql().run("INSERT INTO orgs (slug, created_by, created_at) VALUES (?, ?, ?)", p![&org, &name, now()])?;
         self.auth(&org).ensure_board(DEFAULT_BOARD, SMOKO)?;
-        let token = self.admit(&org, &name, &display, &bio, "admin", None)?;
-        Ok(joined(&org, &name, &token, true, base))
+        self.admit(&org, &name, &display, &bio, "admin", None)?;
+        Ok(joined(&org, &name, &self.mint_token(&org, &name)?, true, base))
     }
 
     /// Which org an invite code lets you into, so the join page can say so before you commit.
@@ -415,9 +421,9 @@ impl Backchannel {
                 return Err(Error::new(Code::Forbidden, "that invite has been used up or has expired; ask for a new one"));
             }
             let org = text(&inv, "org");
-            let token = self.admit(&org, &name, &display, &bio, "member", Some(&text(&inv, "created_by")))?;
+            self.admit(&org, &name, &display, &bio, "member", Some(&text(&inv, "created_by")))?;
             sql.run("UPDATE invites SET uses_left = uses_left - 1 WHERE hash = ? AND org = ?", p![&h, &org])?;
-            return Ok(joined(&org, &name, &token, false, base));
+            return Ok(joined(&org, &name, &self.mint_token(&org, &name)?, false, base));
         }
 
         // No invite: name the org and ask its admins.
@@ -454,7 +460,18 @@ impl Backchannel {
         let Some(r) = sql.one("SELECT * FROM requests WHERE id = ? AND secret_hash = ?", p![id, hash(s)])? else {
             return Err(Error::new(Code::NotFound, "no such request"));
         };
+        let (org, name) = (text(&r, "org"), text(&r, "name"));
         match text(&r, "status").as_str() {
+            // Approved: the token is made now, for the one response that carries it.
+            "admitted" => {
+                if sql.one("SELECT 1 AS x FROM members WHERE org = ? AND name = ? AND active = 1", p![&org, &name])?.is_none() {
+                    return Ok(json!({ "status": "rejected" }));
+                }
+                sql.run("UPDATE requests SET status = 'collected' WHERE id = ? AND org = ?", p![id, &org])?;
+                Ok(joined(&org, &name, &self.mint_token(&org, &name)?, false, base))
+            }
+            "collected" => Ok(json!({ "status": "collected", "message": "This token was already collected. Ask an admin for a new invite if you lost it." })),
+            // Requests approved by an older relay, which stored the token until it was collected.
             "approved" => match opt_text(&r, "token") {
                 Some(token) => {
                     // Hand the token over exactly once.
@@ -575,8 +592,8 @@ impl Backchannel {
                     sql.run("UPDATE requests SET status = 'rejected', decided_by = ? WHERE id = ? AND org = ?", p![&m.name, text(&r, "id"), org])?;
                     format!("Rejected {who}.")
                 } else {
-                    let token = self.admit(org, &who, &text(&r, "display_name"), &text(&r, "bio"), "member", Some(&m.name))?;
-                    sql.run("UPDATE requests SET status = 'approved', token = ?, decided_by = ? WHERE id = ? AND org = ?", p![token, &m.name, text(&r, "id"), org])?;
+                    self.admit(org, &who, &text(&r, "display_name"), &text(&r, "bio"), "member", Some(&m.name))?;
+                    sql.run("UPDATE requests SET status = 'admitted', decided_by = ? WHERE id = ? AND org = ?", p![&m.name, text(&r, "id"), org])?;
                     format!("Approved {who}. Their signup page will pick up the token.")
                 }
             }
