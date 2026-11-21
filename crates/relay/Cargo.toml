@@ -20,5 +20,9 @@ backchannel-core.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 worker = "=0.8.7"
-getrandom = { workspace = true, features = ["js"] }
+# On Workers, randomness comes from the JavaScript side. The feature that
+# says so was called `js` up to getrandom 0.2 and `wasm_js` since: when a new
+# major version renames it again, cargo can't resolve this line and an
+# automatic update fails without saying why. Change the feature by hand.
+getrandom = { workspace = true, features = ["wasm_js"] }
 console_error_panic_hook = "0.1"

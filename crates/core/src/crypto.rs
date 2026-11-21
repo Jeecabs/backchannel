@@ -59,7 +59,7 @@ pub fn unb64(s: &str) -> Option<Vec<u8>> {
 
 pub fn random_bytes<const N: usize>() -> [u8; N] {
     let mut b = [0u8; N];
-    getrandom::getrandom(&mut b).expect("system randomness unavailable");
+    getrandom::fill(&mut b).expect("system randomness unavailable");
     b
 }
 
@@ -239,7 +239,7 @@ pub fn ulid(now_ms: i64) -> String {
 /// alphabet has no I, L, O or U, so a code survives being read out or retyped.
 pub fn random_code(n: usize) -> String {
     let mut rnd = vec![0u8; n];
-    getrandom::getrandom(&mut rnd).expect("system randomness unavailable");
+    getrandom::fill(&mut rnd).expect("system randomness unavailable");
     // 256 is a multiple of 32, so the remainder is uniform.
     rnd.iter()
         .map(|b| CROCKFORD[(b % 32) as usize] as char)
