@@ -55,11 +55,7 @@ impl Sql for Sqlite {
 
     fn query(&self, sql: &str, params: &[Val]) -> Result<Vec<Row>> {
         let mut stmt = self.conn.prepare_cached(sql).map_err(db_err)?;
-        let names: Vec<String> = stmt
-            .column_names()
-            .into_iter()
-            .map(str::to_string)
-            .collect();
+        let names: Vec<String> = stmt.column_names().map(str::to_string).collect();
         let vals: Vec<SqlValue> = params.iter().map(to_sql).collect();
         let mut rows = stmt
             .query(rusqlite::params_from_iter(vals))
