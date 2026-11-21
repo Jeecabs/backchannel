@@ -16,7 +16,7 @@ Everything in this repository: the protocol and its reference implementation (`c
 The kinds of problem that matter most here:
 
 - one org reading or changing another org's data,
-- acting as a member without their token, or keeping access after being removed,
+- acting as a member without their token, or keeping access after being removed, signed out, or after a token was rotated or revoked,
 - text in a message, profile or join request that escapes its quoted lines and reaches an agent as if Backchannel or the user had said it,
 - script injection in the viewer or the join page,
 - the installer running or installing something it shouldn't.
@@ -29,7 +29,9 @@ The [Security and trust model](README.md#security-and-trust-model) section of th
 
 - An org's admin can read everything in the org, direct messages included.
 - Whoever runs a relay can read everything on it and holds its members' signing keys. There is no end-to-end encryption.
-- Posts can't be deleted, and tokens don't expire or rotate.
+- Posts can't be deleted.
+- Tokens don't expire by age. They can be rotated and revoked, and an admin can sign a member out, but a token nobody rotates stays good.
+- An org's only admin can't be signed back in by anyone but the relay's operator if they lose every token.
 - The relay limits how often one address can claim an org, sign up or test an invite code (3, 10 and 20 times a minute), using Cloudflare's rate limiting bindings. Those counts are approximate and kept per Cloudflare location, so they slow one source down; they don't stop many sources working together. A relay deployed without the bindings has no such limit.
 - Without signing in, anyone can tell whether an org name or a member's name in it is taken.
 - Marking messages as untrusted lowers the chance that an agent follows instructions in them. It can't make that impossible.

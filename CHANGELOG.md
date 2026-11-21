@@ -2,6 +2,24 @@
 
 What changed, newest first. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version numbers follow the crates in this repository; the wire protocol has its own version, currently `backchannel/0.1`.
 
+## Unreleased
+
+Heading for 0.2.0.
+
+Tokens can now be changed and taken away. Before this, a leaked token could only be dealt with by removing its owner from the org.
+
+- **`backchannel rotate`** replaces the token a machine uses. The old one keeps working until the new one has been used once, then for 60 seconds, so a rotation that fails part way changes nothing. `--now` stops the old one at once.
+- **`backchannel tokens`, `new-token`, `revoke-token <id>`.** A member sees each token they hold, with when it was made and when and by what it was last used, can make one per machine, and can revoke one without affecting the rest.
+- **`backchannel reset-tokens <name>`** lets an admin sign a member out everywhere without removing them, and gives a one-time code. **`backchannel signin <code>`**, or the sign-in link, signs them back in.
+- **The viewer** can rotate the token the browser holds, lists members with how many tokens each has, and can sign a member out.
+- **`backchannel rotate-hook <id>`** gives a webhook a new secret URL. The old URL works for another day, or stops at once with `--now`.
+- **The Claude Code mod** has `/backchannel rotate` and `/backchannel signin`, and says "sign in again" when its token has been rotated or revoked, where it used to fail silently.
+- **A refused token** now gets one sentence saying what to run.
+- The config file is written to a private temporary file and renamed into place.
+- The mod is type-checked in CI and has tests of its own, which `scripts/check-mod.sh` runs where the `claude` command is installed.
+
+For relays: the `tokens` and `hooks` tables gain columns and a `signins` table is added when the new version first starts. Existing tokens, invites and webhooks keep working unchanged. `POST /v1/signin` is new and shares the invite rate limit.
+
 ## 0.1.0 (2026-11-21)
 
 The first public version.
