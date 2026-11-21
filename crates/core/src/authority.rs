@@ -138,7 +138,13 @@ impl<S: Sql> Authority<S> {
 
     /// For storage whose schema is already set up.
     pub fn attach(sql: S, mode: Mode, clock: impl Fn() -> i64 + 'static) -> Self {
-        Authority { sql, mode, clock: Box::new(clock), open_registration: true, org: DEFAULT_ORG.to_string() }
+        Authority {
+            sql,
+            mode,
+            clock: Box::new(clock),
+            open_registration: true,
+            org: DEFAULT_ORG.to_string(),
+        }
     }
 
     pub fn now(&self) -> i64 {
@@ -150,14 +156,22 @@ impl<S: Sql> Authority<S> {
     /// Binds `name` to `key` on first use. Later calls with the same key update the profile.
     pub fn register(&self, name: &str, key: &str, profile: Profile) -> Result<Identity> {
         if !is_name(name) {
-            return err(Code::Invalid, format!("\"{name}\" is not a valid name: use 2-32 characters of a-z, 0-9 and -"));
+            return err(
+                Code::Invalid,
+                format!("\"{name}\" is not a valid name: use 2-32 characters of a-z, 0-9 and -"),
+            );
         }
         // Profile text is shown to everyone on one line each.
-        let display = profile.display_name.map(|s| clip(&clean_line(&s), limits::DISPLAY_NAME));
+        let display = profile
+            .display_name
+            .map(|s| clip(&clean_line(&s), limits::DISPLAY_NAME));
         let bio = profile.bio.map(|s| clip(&clean_line(&s), limits::BIO));
         tx(&self.sql, || {
             let now = self.now();
-            match self.sql.one("SELECT key FROM identities WHERE org = ? AND name = ?", p![&self.org, name])? {
+            match self.sql.one(
+                "SELECT key FROM identities WHERE org = ? AND name = ?",
+                p![&self.org, name],
+            )? {
                 Some(r) if text(&r, "key") != key => {
                     return err(Code::Conflict, format!("the name \"{name}\" is taken"));
                 }
@@ -179,22 +193,45 @@ impl<S: Sql> Authority<S> {
     }
 
     pub fn identity(&self, name: &str) -> Result<Option<Identity>> {
-        Ok(self.sql.one("SELECT * FROM identities WHERE org = ? AND name = ?", p![&self.org, name])?.map(|r| to_identity(&r)))
+        Ok(self
+            .sql
+            .one(
+                "SELECT * FROM identities WHERE org = ? AND name = ?",
+                p![&self.org, name],
+            )?
+            .map(|r| to_identity(&r)))
     }
 
     pub fn identities(&self) -> Result<Vec<Identity>> {
-        Ok(self.sql.query("SELECT * FROM identities WHERE org = ? ORDER BY last_seen DESC", p![&self.org])?.iter().map(to_identity).collect())
+        Ok(self
+            .sql
+            .query(
+                "SELECT * FROM identities WHERE org = ? ORDER BY last_seen DESC",
+                p![&self.org],
+            )?
+            .iter()
+            .map(to_identity)
+            .collect())
     }
 
     pub fn touch(&self, name: &str) -> Result<()> {
-        self.sql.run("UPDATE identities SET last_seen = ? WHERE org = ? AND name = ?", p![self.now(), &self.org, name])
+        self.sql.run(
+            "UPDATE identities SET last_seen = ? WHERE org = ? AND name = ?",
+            p![self.now(), &self.org, name],
+        )
     }
 
     /// Fails unless `key` is the key bound to `name`.
     pub fn assert_key(&self, name: &str, key: &str) -> Result<()> {
-        match self.sql.one("SELECT key FROM identities WHERE org = ? AND name = ?", p![&self.org, name])? {
+        match self.sql.one(
+            "SELECT key FROM identities WHERE org = ? AND name = ?",
+            p![&self.org, name],
+        )? {
             None => err(Code::Unauthorized, format!("unknown identity \"{name}\"")),
-            Some(r) if text(&r, "key") != key => err(Code::Unauthorized, format!("key does not match the one bound to \"{name}\"")),
+            Some(r) if text(&r, "key") != key => err(
+                Code::Unauthorized,
+                format!("key does not match the one bound to \"{name}\""),
+            ),
             Some(_) => Ok(()),
         }
     }
@@ -216,18 +253,38 @@ impl<S: Sql> Authority<S> {
             }
         }
         tx(&self.sql, || {
-            if self.sql.one("SELECT 1 AS x FROM boards WHERE org = ? AND name = ?", p![&self.org, &spec.name])?.is_some() {
-                return err(Code::Conflict, format!("board \"{}\" already exists", spec.name));
+            if self
+                .sql
+                .one(
+                    "SELECT 1 AS x FROM boards WHERE org = ? AND name = ?",
+                    p![&self.org, &spec.name],
+                )?
+                .is_some()
+            {
+                return err(
+                    Code::Conflict,
+                    format!("board \"{}\" already exists", spec.name),
+                );
             }
-            let description = clip(&clean(spec.description.as_deref().unwrap_or_default()), limits::DESCRIPTION);
-            let vis = if visibility == Visibility::Private { "private" } else { "public" };
+            let description = clip(
+                &clean(spec.description.as_deref().unwrap_or_default()),
+                limits::DESCRIPTION,
+            );
+            let vis = if visibility == Visibility::Private {
+                "private"
+            } else {
+                "public"
+            };
             self.sql.run(
                 "INSERT INTO boards (org, name, description, visibility, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?)",
                 p![&self.org, &spec.name, description, vis, by, self.now()],
             )?;
             if visibility == Visibility::Private {
                 for m in &members {
-                    self.sql.run("INSERT OR IGNORE INTO board_members (org, board, name) VALUES (?, ?, ?)", p![&self.org, &spec.name, m])?;
+                    self.sql.run(
+                        "INSERT OR IGNORE INTO board_members (org, board, name) VALUES (?, ?, ?)",
+                        p![&self.org, &spec.name, m],
+                    )?;
                 }
             }
             Ok(self.board(&spec.name)?.expect("just written"))
@@ -236,7 +293,14 @@ impl<S: Sql> Authority<S> {
 
     /// Creates the board if it does not exist yet. Used for well-known boards.
     pub fn ensure_board(&self, name: &str, description: &str) -> Result<()> {
-        if self.sql.one("SELECT 1 AS x FROM boards WHERE org = ? AND name = ?", p![&self.org, name])?.is_none() {
+        if self
+            .sql
+            .one(
+                "SELECT 1 AS x FROM boards WHERE org = ? AND name = ?",
+                p![&self.org, name],
+            )?
+            .is_none()
+        {
             self.sql.run(
                 "INSERT OR IGNORE INTO boards (org, name, description, visibility, created_by, created_at) VALUES (?, ?, ?, 'public', 'backchannel', ?)",
                 p![&self.org, name, description, self.now()],
@@ -246,13 +310,26 @@ impl<S: Sql> Authority<S> {
     }
 
     fn board_head(&self, name: &str) -> Result<i64> {
-        Ok(self.sql.one("SELECT MAX(seq) AS h FROM posts WHERE org = ? AND board = ?", p![&self.org, name])?.map(|r| int(&r, "h")).unwrap_or(0))
+        Ok(self
+            .sql
+            .one(
+                "SELECT MAX(seq) AS h FROM posts WHERE org = ? AND board = ?",
+                p![&self.org, name],
+            )?
+            .map(|r| int(&r, "h"))
+            .unwrap_or(0))
     }
 
     pub fn board(&self, name: &str) -> Result<Option<Board>> {
         let head = self.board_head(name)?;
         if let Some(owner) = dm_owner(name) {
-            let Some(id) = self.sql.one("SELECT created_at FROM identities WHERE org = ? AND name = ?", p![&self.org, owner])? else { return Ok(None) };
+            let Some(id) = self.sql.one(
+                "SELECT created_at FROM identities WHERE org = ? AND name = ?",
+                p![&self.org, owner],
+            )?
+            else {
+                return Ok(None);
+            };
             return Ok(Some(Board {
                 name: name.to_string(),
                 description: format!("Direct messages to {owner}"),
@@ -263,10 +340,29 @@ impl<S: Sql> Authority<S> {
                 members: None,
             }));
         }
-        let Some(r) = self.sql.one("SELECT * FROM boards WHERE org = ? AND name = ?", p![&self.org, name])? else { return Ok(None) };
-        let visibility = if text(&r, "visibility") == "private" { Visibility::Private } else { Visibility::Public };
+        let Some(r) = self.sql.one(
+            "SELECT * FROM boards WHERE org = ? AND name = ?",
+            p![&self.org, name],
+        )?
+        else {
+            return Ok(None);
+        };
+        let visibility = if text(&r, "visibility") == "private" {
+            Visibility::Private
+        } else {
+            Visibility::Public
+        };
         let members = if visibility == Visibility::Private {
-            Some(self.sql.query("SELECT name FROM board_members WHERE org = ? AND board = ? ORDER BY name", p![&self.org, name])?.iter().map(|m| text(m, "name")).collect())
+            Some(
+                self.sql
+                    .query(
+                        "SELECT name FROM board_members WHERE org = ? AND board = ? ORDER BY name",
+                        p![&self.org, name],
+                    )?
+                    .iter()
+                    .map(|m| text(m, "name"))
+                    .collect(),
+            )
         } else {
             None
         };
@@ -308,16 +404,35 @@ impl<S: Sql> Authority<S> {
         Ok(out)
     }
 
-    pub fn can_read(&self, viewer: Option<&str>, board: &str, author: Option<&str>) -> Result<bool> {
-        let Some(viewer) = viewer else { return Ok(true) };
+    pub fn can_read(
+        &self,
+        viewer: Option<&str>,
+        board: &str,
+        author: Option<&str>,
+    ) -> Result<bool> {
+        let Some(viewer) = viewer else {
+            return Ok(true);
+        };
         if let Some(owner) = dm_owner(board) {
             return Ok(owner == viewer || author == Some(viewer));
         }
-        let Some(b) = self.sql.one("SELECT visibility FROM boards WHERE org = ? AND name = ?", p![&self.org, board])? else { return Ok(false) };
+        let Some(b) = self.sql.one(
+            "SELECT visibility FROM boards WHERE org = ? AND name = ?",
+            p![&self.org, board],
+        )?
+        else {
+            return Ok(false);
+        };
         if text(&b, "visibility") == "public" {
             return Ok(true);
         }
-        Ok(self.sql.one("SELECT 1 AS x FROM board_members WHERE org = ? AND board = ? AND name = ?", p![&self.org, board, viewer])?.is_some())
+        Ok(self
+            .sql
+            .one(
+                "SELECT 1 AS x FROM board_members WHERE org = ? AND board = ? AND name = ?",
+                p![&self.org, board, viewer],
+            )?
+            .is_some())
     }
 
     pub fn can_write(&self, name: &str, board: &str) -> Result<bool> {
@@ -338,51 +453,98 @@ impl<S: Sql> Authority<S> {
         }
         tx(&self.sql, || {
             let now = self.now();
-            if let Some(prior) = self.sql.one("SELECT * FROM posts WHERE org = ? AND id = ?", p![&self.org, &env.id])? {
+            if let Some(prior) = self.sql.one(
+                "SELECT * FROM posts WHERE org = ? AND id = ?",
+                p![&self.org, &env.id],
+            )? {
                 let stored = to_stored(&prior)?;
                 // A retry of a post we already have: safe to repeat at any time.
                 if stored.envelope.sig == env.sig {
                     return Ok(stored);
                 }
-                return err(Code::Conflict, format!("post id {} is already used", env.id));
+                return err(
+                    Code::Conflict,
+                    format!("post id {} is already used", env.id),
+                );
             }
             let ts = parse_iso(&env.ts).unwrap_or(0);
             if (ts - now).abs() > limits::CLOCK_SKEW_MS {
-                return err(Code::Invalid, "ts is more than 5 minutes from the authority clock");
+                return err(
+                    Code::Invalid,
+                    "ts is more than 5 minutes from the authority clock",
+                );
             }
 
             let author = env.from.name.as_str();
-            match self.sql.one("SELECT key FROM identities WHERE org = ? AND name = ?", p![&self.org, author])? {
+            match self.sql.one(
+                "SELECT key FROM identities WHERE org = ? AND name = ?",
+                p![&self.org, author],
+            )? {
                 None if !self.open_registration => {
-                    return err(Code::Forbidden, format!("\"{author}\" has not joined this relay"));
+                    return err(
+                        Code::Forbidden,
+                        format!("\"{author}\" has not joined this relay"),
+                    );
                 }
                 None => {
                     self.register(author, &env.from.key, Profile::default())?;
                 }
                 Some(r) if text(&r, "key") != env.from.key => {
-                    return err(Code::Forbidden, format!("the name \"{author}\" is bound to a different key"));
+                    return err(
+                        Code::Forbidden,
+                        format!("the name \"{author}\" is bound to a different key"),
+                    );
                 }
                 Some(_) => {}
             }
 
             if self.board(&env.board)?.is_none() {
-                let stem: String = env.board.split('/').next().unwrap_or("").chars().take(3).collect();
-                let suggestions: Vec<String> =
-                    self.sql.query("SELECT name FROM boards WHERE org = ? AND name LIKE ? LIMIT 5", p![&self.org, format!("%{stem}%")])?.iter().map(|r| text(r, "name")).collect();
-                return Err(Error::new(Code::NotFound, format!("board \"{}\" does not exist", env.board)).with(json!({ "suggestions": suggestions })));
+                let stem: String = env
+                    .board
+                    .split('/')
+                    .next()
+                    .unwrap_or("")
+                    .chars()
+                    .take(3)
+                    .collect();
+                let suggestions: Vec<String> = self
+                    .sql
+                    .query(
+                        "SELECT name FROM boards WHERE org = ? AND name LIKE ? LIMIT 5",
+                        p![&self.org, format!("%{stem}%")],
+                    )?
+                    .iter()
+                    .map(|r| text(r, "name"))
+                    .collect();
+                return Err(Error::new(
+                    Code::NotFound,
+                    format!("board \"{}\" does not exist", env.board),
+                )
+                .with(json!({ "suggestions": suggestions })));
             }
             if !self.can_write(author, &env.board)? {
-                return err(Code::Forbidden, format!("you are not a member of \"{}\"", env.board));
+                return err(
+                    Code::Forbidden,
+                    format!("you are not a member of \"{}\"", env.board),
+                );
             }
 
-            let recent = self.sql.one("SELECT COUNT(*) AS n FROM posts WHERE org = ? AND author = ? AND received_at > ?", p![&self.org, author, now - 60_000])?;
+            let recent = self.sql.one(
+                "SELECT COUNT(*) AS n FROM posts WHERE org = ? AND author = ? AND received_at > ?",
+                p![&self.org, author, now - 60_000],
+            )?;
             if recent.map(|r| int(&r, "n")).unwrap_or(0) >= limits::POSTS_PER_MINUTE {
-                return Err(Error::new(Code::RateLimited, "too many posts; slow down").with(json!({ "retry_after": 60 })));
+                return Err(Error::new(Code::RateLimited, "too many posts; slow down")
+                    .with(json!({ "retry_after": 60 })));
             }
 
             let target = match &env.ref_ {
                 Some(r) => {
-                    let Some(t) = self.sql.one("SELECT * FROM posts WHERE org = ? AND id = ?", p![&self.org, r])? else {
+                    let Some(t) = self.sql.one(
+                        "SELECT * FROM posts WHERE org = ? AND id = ?",
+                        p![&self.org, r],
+                    )?
+                    else {
                         return err(Code::NotFound, format!("ref {r} does not exist"));
                     };
                     if text(&t, "board") != env.board {
@@ -398,7 +560,10 @@ impl<S: Sql> Authority<S> {
 
             let seq = self.board_head(&env.board)? + 1;
             let mut stored = StoredPost {
-                thread: target.as_ref().map(|t| text(t, "thread")).unwrap_or_else(|| env.id.clone()),
+                thread: target
+                    .as_ref()
+                    .map(|t| text(t, "thread"))
+                    .unwrap_or_else(|| env.id.clone()),
                 envelope: env.clone(),
                 seq,
                 gseq: 0,
@@ -408,7 +573,10 @@ impl<S: Sql> Authority<S> {
             // gseq orders every org's posts in one sequence. The database hands out
             // the next one, so no org ever has to look at another org's rows.
             self.insert(&stored, None)?;
-            let row = self.sql.one("SELECT gseq FROM posts WHERE org = ? AND id = ?", p![&self.org, &env.id])?;
+            let row = self.sql.one(
+                "SELECT gseq FROM posts WHERE org = ? AND id = ?",
+                p![&self.org, &env.id],
+            )?;
             stored.gseq = row.map(|r| int(&r, "gseq")).unwrap_or(0);
             self.touch(author)?;
             Ok(stored)
@@ -423,7 +591,14 @@ impl<S: Sql> Authority<S> {
             return Ok(Ingest::Rejected);
         }
         tx(&self.sql, || {
-            if self.sql.one("SELECT 1 AS x FROM posts WHERE org = ? AND id = ?", p![&self.org, &post.envelope.id])?.is_some() {
+            if self
+                .sql
+                .one(
+                    "SELECT 1 AS x FROM posts WHERE org = ? AND id = ?",
+                    p![&self.org, &post.envelope.id],
+                )?
+                .is_some()
+            {
                 return Ok(Ingest::Duplicate);
             }
             let from = &post.envelope.from;
@@ -469,7 +644,9 @@ impl<S: Sql> Authority<S> {
         let e = &p.envelope;
         let at = parse_iso(&p.received_at).unwrap_or(0);
         let me = e.from.address();
-        let Some(target) = e.ref_.as_deref() else { return Ok(()) };
+        let Some(target) = e.ref_.as_deref() else {
+            return Ok(());
+        };
         let upsert = |state: &str, holder: Val, lease: Val, by: Val, by_at: Val| {
             self.sql.run(
                 "INSERT INTO handling (org, post, state, holder, lease_until, handled_by, handled_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -481,11 +658,20 @@ impl<S: Sql> Authority<S> {
         match e.kind {
             Kind::Claim => {
                 let lease = at + e.lease.unwrap_or(limits::LEASE_DEFAULT) as i64 * 1000;
-                upsert("claimed", me.clone().into(), lease.into(), Val::Null, Val::Null)
+                upsert(
+                    "claimed",
+                    me.clone().into(),
+                    lease.into(),
+                    Val::Null,
+                    Val::Null,
+                )
             }
             Kind::Release => upsert("open", Val::Null, Val::Null, Val::Null, Val::Null),
             Kind::Handled => upsert("handled", Val::Null, Val::Null, me.into(), at.into()),
-            Kind::Retract => self.sql.run("UPDATE posts SET retracted = 1 WHERE org = ? AND id = ?", p![&self.org, target]),
+            Kind::Retract => self.sql.run(
+                "UPDATE posts SET retracted = 1 WHERE org = ? AND id = ?",
+                p![&self.org, target],
+            ),
             _ => Ok(()),
         }
     }
@@ -511,26 +697,53 @@ impl<S: Sql> Authority<S> {
             return Ok(());
         }
         if target_kind.is_action() {
-            return err(Code::Invalid, format!("{} must point at a post, not at a {}", env.kind.as_str(), target_kind.as_str()));
+            return err(
+                Code::Invalid,
+                format!(
+                    "{} must point at a post, not at a {}",
+                    env.kind.as_str(),
+                    target_kind.as_str()
+                ),
+            );
         }
         let h = self.handling_at(&text(target, "id"), now)?;
         let is_author = target_author == env.from.name;
         if h.state == HandlingState::Handled {
-            return Err(Error::new(Code::Conflict, format!("already handled by {}", h.handled_by.clone().unwrap_or_default()))
-                .with(serde_json::to_value(&h).unwrap()));
+            return Err(Error::new(
+                Code::Conflict,
+                format!(
+                    "already handled by {}",
+                    h.handled_by.clone().unwrap_or_default()
+                ),
+            )
+            .with(serde_json::to_value(&h).unwrap()));
         }
-        let held_by_other = h.state == HandlingState::Claimed && h.holder.as_deref() != Some(me.as_str());
+        let held_by_other =
+            h.state == HandlingState::Claimed && h.holder.as_deref() != Some(me.as_str());
         match env.kind {
             Kind::Claim if held_by_other => Err(Error::new(
                 Code::Conflict,
-                format!("claimed by {} until {}", h.holder.clone().unwrap_or_default(), h.lease_until.clone().unwrap_or_default()),
+                format!(
+                    "claimed by {} until {}",
+                    h.holder.clone().unwrap_or_default(),
+                    h.lease_until.clone().unwrap_or_default()
+                ),
             )
             .with(serde_json::to_value(&h).unwrap())),
-            Kind::Release if h.state != HandlingState::Claimed => err(Code::Conflict, "nobody has claimed it"),
-            Kind::Release if held_by_other && !is_author => err(Code::Forbidden, "only the holder or the post's author can release it"),
+            Kind::Release if h.state != HandlingState::Claimed => {
+                err(Code::Conflict, "nobody has claimed it")
+            }
+            Kind::Release if held_by_other && !is_author => err(
+                Code::Forbidden,
+                "only the holder or the post's author can release it",
+            ),
             Kind::Handled if held_by_other && !is_author => Err(Error::new(
                 Code::Conflict,
-                format!("{} is on it until {}; ask them, or wait for the lease to lapse", h.holder.clone().unwrap_or_default(), h.lease_until.clone().unwrap_or_default()),
+                format!(
+                    "{} is on it until {}; ask them, or wait for the lease to lapse",
+                    h.holder.clone().unwrap_or_default(),
+                    h.lease_until.clone().unwrap_or_default()
+                ),
             )
             .with(serde_json::to_value(&h).unwrap())),
             _ => Ok(()),
@@ -543,8 +756,20 @@ impl<S: Sql> Authority<S> {
     }
 
     fn handling_at(&self, post: &str, now: i64) -> Result<Handling> {
-        let Some(r) = self.sql.one("SELECT * FROM handling WHERE org = ? AND post = ?", p![&self.org, post])? else {
-            return Ok(Handling { post: post.into(), state: HandlingState::Open, holder: None, lease_until: None, handled_by: None, handled_at: None, updated_at: iso(0) });
+        let Some(r) = self.sql.one(
+            "SELECT * FROM handling WHERE org = ? AND post = ?",
+            p![&self.org, post],
+        )?
+        else {
+            return Ok(Handling {
+                post: post.into(),
+                state: HandlingState::Open,
+                holder: None,
+                lease_until: None,
+                handled_by: None,
+                handled_at: None,
+                updated_at: iso(0),
+            });
         };
         let lease = opt_int(&r, "lease_until");
         let state = text(&r, "state");
@@ -556,7 +781,11 @@ impl<S: Sql> Authority<S> {
                 ("claimed", false) => HandlingState::Claimed,
                 _ => HandlingState::Open,
             },
-            holder: if expired { None } else { opt_text(&r, "holder") },
+            holder: if expired {
+                None
+            } else {
+                opt_text(&r, "holder")
+            },
             lease_until: if expired { None } else { lease.map(iso) },
             handled_by: opt_text(&r, "handled_by"),
             handled_at: opt_int(&r, "handled_at").map(iso),
@@ -586,7 +815,15 @@ impl<S: Sql> Authority<S> {
         (clause, params)
     }
 
-    fn select(&self, where_: &str, leading: Vec<Val>, viewer: Option<&str>, include_expired: bool, order_limit: &str, limit: i64) -> Result<Vec<StoredPost>> {
+    fn select(
+        &self,
+        where_: &str,
+        leading: Vec<Val>,
+        viewer: Option<&str>,
+        include_expired: bool,
+        order_limit: &str,
+        limit: i64,
+    ) -> Result<Vec<StoredPost>> {
         let (vis, vparams) = self.visible(viewer, include_expired);
         // Parameter order follows the text: the org, then `where_`, then visibility, then the limit.
         let mut params: Vec<Val> = vec![(&self.org).into()];
@@ -594,45 +831,109 @@ impl<S: Sql> Authority<S> {
         params.extend(vparams);
         params.push(limit.clamp(1, limits::FEED_PAGE).into());
         self.sql
-            .query(&format!("SELECT p.* FROM posts p WHERE p.org = ? AND {where_} AND {vis} {order_limit}"), &params)?
+            .query(
+                &format!(
+                    "SELECT p.* FROM posts p WHERE p.org = ? AND {where_} AND {vis} {order_limit}"
+                ),
+                &params,
+            )?
             .iter()
             .map(to_stored)
             .collect()
     }
 
     /// Everything `viewer` can see after `after`, in gseq order.
-    pub fn feed(&self, viewer: Option<&str>, after: i64, limit: i64, include_expired: bool) -> Result<Vec<StoredPost>> {
-        self.select("p.gseq > ?", vec![after.into()], viewer, include_expired, "ORDER BY p.gseq LIMIT ?", limit)
+    pub fn feed(
+        &self,
+        viewer: Option<&str>,
+        after: i64,
+        limit: i64,
+        include_expired: bool,
+    ) -> Result<Vec<StoredPost>> {
+        self.select(
+            "p.gseq > ?",
+            vec![after.into()],
+            viewer,
+            include_expired,
+            "ORDER BY p.gseq LIMIT ?",
+            limit,
+        )
     }
 
-    pub fn read_board(&self, viewer: Option<&str>, board: &str, o: ReadOpts) -> Result<Vec<StoredPost>> {
+    pub fn read_board(
+        &self,
+        viewer: Option<&str>,
+        board: &str,
+        o: ReadOpts,
+    ) -> Result<Vec<StoredPost>> {
         if dm_owner(board).is_none() && !self.can_read(viewer, board, None)? {
-            return err(Code::NotFound, format!("board \"{board}\" does not exist or you are not a member"));
+            return err(
+                Code::NotFound,
+                format!("board \"{board}\" does not exist or you are not a member"),
+            );
         }
         let limit = o.limit.unwrap_or(30);
         if let Some(after) = o.after {
-            return self.select("p.board = ? AND p.seq > ?", vec![board.into(), after.into()], viewer, o.include_expired, "ORDER BY p.seq LIMIT ?", limit);
+            return self.select(
+                "p.board = ? AND p.seq > ?",
+                vec![board.into(), after.into()],
+                viewer,
+                o.include_expired,
+                "ORDER BY p.seq LIMIT ?",
+                limit,
+            );
         }
         let before = o.before.unwrap_or(i64::MAX);
-        let mut v = self.select("p.board = ? AND p.seq < ?", vec![board.into(), before.into()], viewer, o.include_expired, "ORDER BY p.seq DESC LIMIT ?", limit)?;
+        let mut v = self.select(
+            "p.board = ? AND p.seq < ?",
+            vec![board.into(), before.into()],
+            viewer,
+            o.include_expired,
+            "ORDER BY p.seq DESC LIMIT ?",
+            limit,
+        )?;
         v.reverse();
         Ok(v)
     }
 
-    pub fn thread(&self, viewer: Option<&str>, id: &str, include_expired: bool) -> Result<Vec<StoredPost>> {
-        let Some(p) = self.post(id)? else { return err(Code::NotFound, format!("post {id} not found")) };
+    pub fn thread(
+        &self,
+        viewer: Option<&str>,
+        id: &str,
+        include_expired: bool,
+    ) -> Result<Vec<StoredPost>> {
+        let Some(p) = self.post(id)? else {
+            return err(Code::NotFound, format!("post {id} not found"));
+        };
         if !self.can_read(viewer, &p.envelope.board, Some(&p.envelope.from.name))? {
             return err(Code::NotFound, format!("post {id} not found"));
         }
-        self.select("p.thread = ?", vec![p.thread.clone().into()], viewer, include_expired, "ORDER BY p.gseq LIMIT ?", limits::FEED_PAGE)
+        self.select(
+            "p.thread = ?",
+            vec![p.thread.clone().into()],
+            viewer,
+            include_expired,
+            "ORDER BY p.gseq LIMIT ?",
+            limits::FEED_PAGE,
+        )
     }
 
     pub fn post(&self, id: &str) -> Result<Option<StoredPost>> {
-        self.sql.one("SELECT * FROM posts WHERE org = ? AND id = ?", p![&self.org, id])?.map(|r| to_stored(&r)).transpose()
+        self.sql
+            .one(
+                "SELECT * FROM posts WHERE org = ? AND id = ?",
+                p![&self.org, id],
+            )?
+            .map(|r| to_stored(&r))
+            .transpose()
     }
 
     /// Asks and tasks nobody has handled yet, newest first.
-    pub fn open_items(&self, viewer: Option<&str>, limit: i64) -> Result<Vec<(StoredPost, Handling)>> {
+    pub fn open_items(
+        &self,
+        viewer: Option<&str>,
+        limit: i64,
+    ) -> Result<Vec<(StoredPost, Handling)>> {
         let posts = self.select(
             "p.kind IN ('ask', 'task') AND p.retracted = 0 AND NOT EXISTS (SELECT 1 FROM handling h WHERE h.org = p.org AND h.post = p.id AND h.state = 'handled')",
             vec![],
@@ -641,13 +942,23 @@ impl<S: Sql> Authority<S> {
             "ORDER BY p.gseq DESC LIMIT ?",
             limit,
         )?;
-        posts.into_iter().map(|p| self.handling(&p.envelope.id).map(|h| (p, h))).collect()
+        posts
+            .into_iter()
+            .map(|p| self.handling(&p.envelope.id).map(|h| (p, h)))
+            .collect()
     }
 
     /// The gseq of this org's newest post. gseq is shared by every org in the
     /// database, so within one org it only ever grows but may skip numbers.
     pub fn head(&self) -> Result<i64> {
-        Ok(self.sql.one("SELECT MAX(gseq) AS h FROM posts WHERE org = ?", p![&self.org])?.map(|r| int(&r, "h")).unwrap_or(0))
+        Ok(self
+            .sql
+            .one(
+                "SELECT MAX(gseq) AS h FROM posts WHERE org = ?",
+                p![&self.org],
+            )?
+            .map(|r| int(&r, "h"))
+            .unwrap_or(0))
     }
 }
 
@@ -656,7 +967,10 @@ impl<S: Sql> Authority<S> {
 pub fn validate_envelope(e: &Envelope) -> Result<()> {
     let bad = |m: String| err::<()>(Code::Invalid, m);
     if e.v != PROTOCOL {
-        return bad(format!("unsupported protocol version {}; this authority speaks {PROTOCOL}", e.v));
+        return bad(format!(
+            "unsupported protocol version {}; this authority speaks {PROTOCOL}",
+            e.v
+        ));
     }
     if !is_ulid(&e.id) {
         return bad("id must be a ULID".into());
@@ -668,19 +982,29 @@ pub fn validate_envelope(e: &Envelope) -> Result<()> {
         return bad("invalid from".into());
     }
     if e.body.chars().count() > limits::BODY {
-        return err(Code::TooLarge, format!("body is over {} characters", limits::BODY));
+        return err(
+            Code::TooLarge,
+            format!("body is over {} characters", limits::BODY),
+        );
     }
     if !is_clean(&e.body) {
         return bad("body has control characters in it; only newlines and tabs are allowed".into());
     }
-    if e.title.as_ref().is_some_and(|t| t.chars().count() > limits::TITLE) {
+    if e.title
+        .as_ref()
+        .is_some_and(|t| t.chars().count() > limits::TITLE)
+    {
         return bad("title too long".into());
     }
     if e.title.as_ref().is_some_and(|t| !is_clean_line(t)) {
         return bad("title must be one line with no control characters".into());
     }
     if e.kind.needs_ref() != e.ref_.is_some() {
-        return bad(if e.kind.needs_ref() { format!("{} needs ref", e.kind.as_str()) } else { format!("{} cannot have ref", e.kind.as_str()) });
+        return bad(if e.kind.needs_ref() {
+            format!("{} needs ref", e.kind.as_str())
+        } else {
+            format!("{} cannot have ref", e.kind.as_str())
+        });
     }
     if e.ref_.as_ref().is_some_and(|r| !is_ulid(r)) {
         return bad("ref must be a ULID".into());
@@ -698,12 +1022,18 @@ pub fn validate_envelope(e: &Envelope) -> Result<()> {
             return bad(format!("at most {} tags", limits::TAGS));
         }
         if let Some(x) = t.iter().find(|x| !is_tag(x)) {
-            return bad(format!("invalid tag {x:?}: a tag is 1-{} letters, digits and . _ - / : + #", limits::TAG));
+            return bad(format!(
+                "invalid tag {x:?}: a tag is 1-{} letters, digits and . _ - / : + #",
+                limits::TAG
+            ));
         }
     }
     if let Some(d) = &e.data {
         if crate::crypto::canonical(&serde_json::Value::Object(d.clone())).len() > limits::DATA {
-            return err(Code::TooLarge, format!("data is over {} bytes", limits::DATA));
+            return err(
+                Code::TooLarge,
+                format!("data is over {} bytes", limits::DATA),
+            );
         }
     }
     if let Some(x) = &e.ext {
@@ -719,7 +1049,11 @@ pub fn validate_envelope(e: &Envelope) -> Result<()> {
             return bad("lease is only allowed on claim".into());
         }
         if !(limits::LEASE_MIN..=limits::LEASE_MAX).contains(&l) {
-            return bad(format!("lease must be {}-{} seconds", limits::LEASE_MIN, limits::LEASE_MAX));
+            return bad(format!(
+                "lease must be {}-{} seconds",
+                limits::LEASE_MIN,
+                limits::LEASE_MAX
+            ));
         }
     }
     if parse_iso(&e.ts).is_none() {
@@ -735,7 +1069,8 @@ pub fn validate_envelope(e: &Envelope) -> Result<()> {
 }
 
 fn to_stored(r: &Row) -> Result<StoredPost> {
-    let envelope: Envelope = serde_json::from_str(&text(r, "envelope")).map_err(|e| Error::new(Code::Internal, format!("corrupt envelope: {e}")))?;
+    let envelope: Envelope = serde_json::from_str(&text(r, "envelope"))
+        .map_err(|e| Error::new(Code::Internal, format!("corrupt envelope: {e}")))?;
     Ok(StoredPost {
         envelope,
         seq: int(r, "seq"),

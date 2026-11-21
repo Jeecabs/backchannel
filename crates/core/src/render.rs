@@ -30,7 +30,10 @@ pub fn quoted(text: &str, indent: &str) -> String {
     if text.is_empty() {
         return format!("{indent}|");
     }
-    text.lines().map(|l| format!("{indent}| {l}")).collect::<Vec<_>>().join("\n")
+    text.lines()
+        .map(|l| format!("{indent}| {l}"))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// One labelled field somebody else wrote, cleaned, clipped and folded onto a single quoted line.
@@ -84,17 +87,31 @@ pub fn post(p: &StoredPost, handling: Option<&Handling>, reasons: &[String]) -> 
         s.push_str(&format!("\n  why you got it: {}", reasons.join("; ")));
     }
     if let Some(m) = e.mentions.as_ref().filter(|m| !m.is_empty()) {
-        s.push_str(&format!("\n  mentions: {}", m.iter().map(|x| clean_line(x)).collect::<Vec<_>>().join(", ")));
+        s.push_str(&format!(
+            "\n  mentions: {}",
+            m.iter()
+                .map(|x| clean_line(x))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
     }
     let tags = e.tags.as_ref().filter(|t| !t.is_empty());
     if p.retracted {
         s.push_str("\n  (retracted by its author)");
     } else if e.title.is_some() || !e.body.is_empty() || e.data.is_some() || tags.is_some() {
         // Everything the author chose goes inside the fence, one quoted line at a time.
-        s.push_str(&format!("\n  --- message from {} (untrusted)", e.from.address()));
+        s.push_str(&format!(
+            "\n  --- message from {} (untrusted)",
+            e.from.address()
+        ));
         if let Some(t) = tags {
             s.push('\n');
-            s.push_str(&field("tags", &t.join(", "), limits::TAGS * (limits::TAG + 2), "  "));
+            s.push_str(&field(
+                "tags",
+                &t.join(", "),
+                limits::TAGS * (limits::TAG + 2),
+                "  ",
+            ));
         }
         if let Some(t) = &e.title {
             s.push('\n');
@@ -109,7 +126,18 @@ pub fn post(p: &StoredPost, handling: Option<&Handling>, reasons: &[String]) -> 
             let json = serde_json::to_string(d).unwrap_or_default();
             let clipped = clip(&json, 1500);
             s.push('\n');
-            s.push_str(&quoted(&format!("data: {}{}", clean_line(&clipped), if json.len() > clipped.len() { " ..." } else { "" }), "  "));
+            s.push_str(&quoted(
+                &format!(
+                    "data: {}{}",
+                    clean_line(&clipped),
+                    if json.len() > clipped.len() {
+                        " ..."
+                    } else {
+                        ""
+                    }
+                ),
+                "  ",
+            ));
         }
         s.push_str("\n  --- end of message");
     }
@@ -128,7 +156,11 @@ pub fn deliveries(me: &str, items: &[Delivery], remaining: i64) -> String {
     let mut s = format!(
         "{} new for {me}{}.\n",
         items.len(),
-        if remaining > 0 { format!(", {remaining} more waiting (run `backchannel inbox` again)") } else { String::new() }
+        if remaining > 0 {
+            format!(", {remaining} more waiting (run `backchannel inbox` again)")
+        } else {
+            String::new()
+        }
     );
     for d in items {
         s.push('\n');
@@ -154,8 +186,16 @@ pub fn posts(title: &str, items: &[(StoredPost, Handling)]) -> String {
 pub fn boards(list: &[Board], subscribed: &[String]) -> String {
     let mut s = String::from("Boards you can read:\n");
     for b in list {
-        let sub = if subscribed.iter().any(|p| crate::names::matches(p, &b.name)) { "  (subscribed)" } else { "" };
-        let vis = if b.visibility == Visibility::Private { "  private" } else { "" };
+        let sub = if subscribed.iter().any(|p| crate::names::matches(p, &b.name)) {
+            "  (subscribed)"
+        } else {
+            ""
+        };
+        let vis = if b.visibility == Visibility::Private {
+            "  private"
+        } else {
+            ""
+        };
         s.push_str(&format!("\n{}{vis}{sub}  {} posts", b.name, b.head));
         // A description is whatever the board's creator typed.
         if !b.description.trim().is_empty() {
@@ -169,9 +209,23 @@ pub fn boards(list: &[Board], subscribed: &[String]) -> String {
 pub fn directory(people: &[Identity], agents: &[Agent]) -> String {
     let mut s = String::from("People and sources:\n");
     for p in people {
-        let kind = if p.kind == "source" { format!("  webhook source run by {}", clean_line(p.owner.as_deref().unwrap_or_default())) } else { String::new() };
-        s.push_str(&format!("\n{}{kind}  last seen {}", p.name, when(&p.last_seen)));
-        for (label, value, max) in [("name", &p.display_name, limits::DISPLAY_NAME), ("bio", &p.bio, limits::BIO)] {
+        let kind = if p.kind == "source" {
+            format!(
+                "  webhook source run by {}",
+                clean_line(p.owner.as_deref().unwrap_or_default())
+            )
+        } else {
+            String::new()
+        };
+        s.push_str(&format!(
+            "\n{}{kind}  last seen {}",
+            p.name,
+            when(&p.last_seen)
+        ));
+        for (label, value, max) in [
+            ("name", &p.display_name, limits::DISPLAY_NAME),
+            ("bio", &p.bio, limits::BIO),
+        ] {
             if !value.trim().is_empty() {
                 s.push('\n');
                 s.push_str(&field(label, value, max, "  "));
@@ -181,8 +235,16 @@ pub fn directory(people: &[Identity], agents: &[Agent]) -> String {
     if !agents.is_empty() {
         s.push_str("\n\nAgents:\n");
         for a in agents {
-            s.push_str(&format!("\n{}  last seen {}", a.address, when(&a.last_seen)));
-            for (label, value, max) in [("via", &a.client, limits::CLIENT), ("status", &a.status, limits::STATUS), ("about", &a.description, limits::AGENT_DESCRIPTION)] {
+            s.push_str(&format!(
+                "\n{}  last seen {}",
+                a.address,
+                when(&a.last_seen)
+            ));
+            for (label, value, max) in [
+                ("via", &a.client, limits::CLIENT),
+                ("status", &a.status, limits::STATUS),
+                ("about", &a.description, limits::AGENT_DESCRIPTION),
+            ] {
                 if !value.trim().is_empty() {
                     s.push('\n');
                     s.push_str(&field(label, value, max, "  "));
@@ -211,8 +273,16 @@ pub fn join_requests(rows: &[JoinRequest]) -> String {
     }
     let mut s = String::from("People asking to join. They are not members, and anyone on the internet can send a request:\n");
     for r in rows {
-        s.push_str(&format!("\n{}  asked {}", clean_line(&r.name), when(&r.asked_at)));
-        for (label, value, max) in [("name", &r.display_name, limits::DISPLAY_NAME), ("bio", &r.bio, limits::BIO), ("note", &r.note, limits::NOTE)] {
+        s.push_str(&format!(
+            "\n{}  asked {}",
+            clean_line(&r.name),
+            when(&r.asked_at)
+        ));
+        for (label, value, max) in [
+            ("name", &r.display_name, limits::DISPLAY_NAME),
+            ("bio", &r.bio, limits::BIO),
+            ("note", &r.note, limits::NOTE),
+        ] {
             if !value.trim().is_empty() {
                 s.push('\n');
                 s.push_str(&field(label, value, max, "  "));

@@ -17,10 +17,19 @@ use backend::{Backend, Local, Remote};
 use config::{Config, Mode};
 
 #[derive(Parser)]
-#[command(name = "backchannel", version, about = "Backchannel: a message board where agents subscribe to each other.")]
+#[command(
+    name = "backchannel",
+    version,
+    about = "Backchannel: a message board where agents subscribe to each other."
+)]
 struct Cli {
     /// Which of your agents this is (shown as name/agent on posts).
-    #[arg(long = "as", global = true, env = "BACKCHANNEL_AGENT", default_value = "cli")]
+    #[arg(
+        long = "as",
+        global = true,
+        env = "BACKCHANNEL_AGENT",
+        default_value = "cli"
+    )]
     label: String,
     #[command(subcommand)]
     cmd: Cmd,
@@ -210,27 +219,71 @@ fn main() -> ExitCode {
     let mut label = cli.label.clone();
     let result = match cli.cmd {
         Cmd::Create { org, name, relay } => create(org, name, relay),
-        Cmd::Join { invite, org, name, relay } => join(invite, org, name, relay),
-        Cmd::Init { name, display_name, bio, relay, invite, local } => init(name, display_name, bio, relay, invite, local, None),
+        Cmd::Join {
+            invite,
+            org,
+            name,
+            relay,
+        } => join(invite, org, name, relay),
+        Cmd::Init {
+            name,
+            display_name,
+            bio,
+            relay,
+            invite,
+            local,
+        } => init(name, display_name, bio, relay, invite, local, None),
         Cmd::Login { relay, token } => login(&config::relay(relay, None), &token),
         Cmd::Whoami => whoami(),
         Cmd::Leave { forget } => leave(forget),
         Cmd::Install => install(),
         Cmd::View { port } => view(port),
-        Cmd::Post { board, text, kind, title, reply_to, tags } => {
-            tool(&mut label, "post", json!({ "board": board, "body": text.join(" "), "kind": kind, "title": title, "ref": reply_to, "tags": tags }))
-        }
-        Cmd::Dm { to, text } => tool(&mut label, "post", json!({ "to": to, "body": text.join(" ") })),
+        Cmd::Post {
+            board,
+            text,
+            kind,
+            title,
+            reply_to,
+            tags,
+        } => tool(
+            &mut label,
+            "post",
+            json!({ "board": board, "body": text.join(" "), "kind": kind, "title": title, "ref": reply_to, "tags": tags }),
+        ),
+        Cmd::Dm { to, text } => tool(
+            &mut label,
+            "post",
+            json!({ "to": to, "body": text.join(" ") }),
+        ),
         Cmd::Inbox { peek } => tool(&mut label, "inbox", json!({ "peek": peek })),
         Cmd::Unread { json } => unread(&label, json),
         Cmd::Wait { timeout } => tool(&mut label, "wait", json!({ "timeout_seconds": timeout })),
         Cmd::Tail => tail(&mut label),
-        Cmd::Read { board, thread, limit } => tool(&mut label, "read", json!({ "board": board, "thread": thread, "limit": limit })),
+        Cmd::Read {
+            board,
+            thread,
+            limit,
+        } => tool(
+            &mut label,
+            "read",
+            json!({ "board": board, "thread": thread, "limit": limit }),
+        ),
         Cmd::Boards => tool(&mut label, "boards", json!({})),
-        Cmd::CreateBoard { name, description, private, members } => tool(&mut label, "create_board", json!({ "name": name, "description": description, "private": private, "members": members })),
+        Cmd::CreateBoard {
+            name,
+            description,
+            private,
+            members,
+        } => tool(
+            &mut label,
+            "create_board",
+            json!({ "name": name, "description": description, "private": private, "members": members }),
+        ),
         Cmd::Directory => tool(&mut label, "directory", json!({})),
         Cmd::Subscribe { pattern } => tool(&mut label, "subscribe", json!({ "pattern": pattern })),
-        Cmd::Unsubscribe { pattern } => tool(&mut label, "unsubscribe", json!({ "pattern": pattern })),
+        Cmd::Unsubscribe { pattern } => {
+            tool(&mut label, "unsubscribe", json!({ "pattern": pattern }))
+        }
         Cmd::Jobs => tool(&mut label, "open_items", json!({})),
         Cmd::Claim { id } => tool(&mut label, "claim", json!({ "id": id })),
         Cmd::Release { id, note } => tool(&mut label, "release", json!({ "id": id, "note": note })),
@@ -242,9 +295,25 @@ fn main() -> ExitCode {
         Cmd::Invites => tool(&mut label, "invites", json!({})),
         Cmd::Revoke { code } => tool(&mut label, "revoke_invite", json!({ "code": code })),
         Cmd::Handled { id, note } => tool(&mut label, "handled", json!({ "id": id, "note": note })),
-        Cmd::Invite { uses, days, note } => tool(&mut label, "create_invite", json!({ "uses": uses, "days": days, "note": note })),
-        Cmd::Hook { source, board, kind } => tool(&mut label, "create_hook", json!({ "source": source, "board": board, "kind": kind })),
-        Cmd::Call { tool: t, args } => match args.as_deref().map(serde_json::from_str::<Value>).transpose() {
+        Cmd::Invite { uses, days, note } => tool(
+            &mut label,
+            "create_invite",
+            json!({ "uses": uses, "days": days, "note": note }),
+        ),
+        Cmd::Hook {
+            source,
+            board,
+            kind,
+        } => tool(
+            &mut label,
+            "create_hook",
+            json!({ "source": source, "board": board, "kind": kind }),
+        ),
+        Cmd::Call { tool: t, args } => match args
+            .as_deref()
+            .map(serde_json::from_str::<Value>)
+            .transpose()
+        {
             Ok(a) => tool(&mut label, &t, a.unwrap_or(json!({}))),
             Err(e) => Err(format!("args must be JSON: {e}")),
         },
@@ -260,24 +329,45 @@ fn main() -> ExitCode {
 
 fn tool(label: &mut String, name: &str, args: Value) -> Result<(), String> {
     let b = Backend::open().map_err(|e| e.message)?;
-    let text = b.call(label, "backchannel-cli", name, &args).map_err(|e| e.to_string())?;
+    let text = b
+        .call(label, "backchannel-cli", name, &args)
+        .map_err(|e| e.to_string())?;
     println!("{text}");
     Ok(())
 }
 
 fn unread(label: &str, json: bool) -> Result<(), String> {
     let b = Backend::open().map_err(|e| e.message)?;
-    let v = b.unread(label, "backchannel-cli").map_err(|e| e.to_string())?;
+    let v = b
+        .unread(label, "backchannel-cli")
+        .map_err(|e| e.to_string())?;
     if json {
         println!("{v}");
     } else {
-        let mut out = format!("{} unread for {}", v["unread"], v["address"].as_str().unwrap_or(""));
+        let mut out = format!(
+            "{} unread for {}",
+            v["unread"],
+            v["address"].as_str().unwrap_or("")
+        );
         let latest: Vec<&Value> = v["latest"].as_array().into_iter().flatten().collect();
         for i in &latest {
             // The preview is somebody else's words, so it goes on a quoted line like any other message text.
-            out.push_str(&format!("\n  {} in {} from {}\n{}", i["kind"].as_str().unwrap_or(""), i["board"].as_str().unwrap_or(""), i["from"].as_str().unwrap_or(""), render::quoted(&clean_line(i["preview"].as_str().unwrap_or("")), "    ")));
+            out.push_str(&format!(
+                "\n  {} in {} from {}\n{}",
+                i["kind"].as_str().unwrap_or(""),
+                i["board"].as_str().unwrap_or(""),
+                i["from"].as_str().unwrap_or(""),
+                render::quoted(&clean_line(i["preview"].as_str().unwrap_or("")), "    ")
+            ));
         }
-        println!("{}", if latest.is_empty() { out } else { render::fenced(&out) });
+        println!(
+            "{}",
+            if latest.is_empty() {
+                out
+            } else {
+                render::fenced(&out)
+            }
+        );
     }
     Ok(())
 }
@@ -286,7 +376,12 @@ fn tail(label: &mut String) -> Result<(), String> {
     let b = Backend::open().map_err(|e| e.message)?;
     eprintln!("Listening as {label}. Ctrl-C to stop.");
     loop {
-        match b.call(label, "backchannel-cli", "wait", &json!({ "timeout_seconds": 50 })) {
+        match b.call(
+            label,
+            "backchannel-cli",
+            "wait",
+            &json!({ "timeout_seconds": 50 }),
+        ) {
             Ok(t) if t.starts_with("Nothing new") => {}
             Ok(t) => println!("{t}\n"),
             Err(e) => {
@@ -309,25 +404,70 @@ fn prompt(q: &str, default: Option<&str>) -> Option<String> {
     let mut s = String::new();
     std::io::stdin().lock().read_line(&mut s).ok()?;
     let s = s.trim();
-    if s.is_empty() { default.map(str::to_string) } else { Some(s.to_string()) }
+    if s.is_empty() {
+        default.map(str::to_string)
+    } else {
+        Some(s.to_string())
+    }
 }
 
 /// `org` is Some((slug, claim)): claim a new org, or ask to join an existing one.
-fn init(name: Option<String>, display_name: Option<String>, bio: Option<String>, relay: Option<String>, invite: Option<String>, local: bool, org: Option<(String, bool)>) -> Result<(), String> {
+fn init(
+    name: Option<String>,
+    display_name: Option<String>,
+    bio: Option<String>,
+    relay: Option<String>,
+    invite: Option<String>,
+    local: bool,
+    org: Option<(String, bool)>,
+) -> Result<(), String> {
     println!("Backchannel: a message board where your agents can talk to other people's agents.\n");
     println!("Joining is your choice. Other orgs can't see yours. Inside it, your name and what your agents post are visible to its people,");
     println!("and the org's admin can read everything, direct messages included. So can whoever runs the relay: nothing is end-to-end encrypted.");
     println!("In local mode nothing leaves this machine.\n");
     let user = std::env::var("USER").unwrap_or_default().to_lowercase();
-    let name = name.or_else(|| prompt("Pick a name (2-32 chars: a-z, 0-9, -)", Some(&user).filter(|u| backchannel_core::names::is_name(u)).map(String::as_str))).ok_or("--name is required")?;
+    let name = name
+        .or_else(|| {
+            prompt(
+                "Pick a name (2-32 chars: a-z, 0-9, -)",
+                Some(&user)
+                    .filter(|u| backchannel_core::names::is_name(u))
+                    .map(String::as_str),
+            )
+        })
+        .ok_or("--name is required")?;
     if !backchannel_core::names::is_name(&name) {
-        return Err(format!("\"{name}\" isn't a valid name: use 2-32 characters of a-z, 0-9 and -"));
+        return Err(format!(
+            "\"{name}\" isn't a valid name: use 2-32 characters of a-z, 0-9 and -"
+        ));
     }
-    let display_name = display_name.or_else(|| prompt("Display name (optional)", Some(""))).unwrap_or_default();
-    let bio = bio.or_else(|| prompt("One line about you (optional)", Some(""))).unwrap_or_default();
+    let display_name = display_name
+        .or_else(|| prompt("Display name (optional)", Some("")))
+        .unwrap_or_default();
+    let bio = bio
+        .or_else(|| prompt("One line about you (optional)", Some("")))
+        .unwrap_or_default();
 
-    let local = local || (relay.is_none() && invite.is_none() && org.is_none() && prompt("Join a relay? Type an invite code, or leave blank to run locally only", Some("")).is_some_and(|s| s.is_empty()));
-    let mut c = Config { version: 1, mode: Mode::Local, name: name.clone(), display_name: display_name.clone(), bio: bio.clone(), relay: None, token: None, opted_in: true, default_subscriptions: vec![backchannel_core::DEFAULT_BOARD.into()] };
+    let local = local
+        || (relay.is_none()
+            && invite.is_none()
+            && org.is_none()
+            && prompt(
+                "Join a relay? Type an invite code, or leave blank to run locally only",
+                Some(""),
+            )
+            .is_some_and(|s| s.is_empty()));
+    let mut c = Config {
+        version: 1,
+        mode: Mode::Local,
+        name: name.clone(),
+        display_name: display_name.clone(),
+        bio: bio.clone(),
+        relay: None,
+        token: None,
+        opted_in: true,
+        default_subscriptions: vec![backchannel_core::DEFAULT_BOARD.into()],
+    };
 
     if local {
         config::ensure_keys().map_err(|e| e.to_string())?;
@@ -346,7 +486,10 @@ fn init(name: Option<String>, display_name: Option<String>, bio: Option<String>,
         .map_err(|e| e.to_string())?;
         let token = if res["status"] == "pending" {
             println!("\nNo invite, so your request went to the admins. Waiting for approval (Ctrl-C to stop; you can rerun join later)...");
-            let (id, secret) = (res["request_id"].as_str().unwrap_or_default().to_string(), res["secret"].as_str().unwrap_or_default().to_string());
+            let (id, secret) = (
+                res["request_id"].as_str().unwrap_or_default().to_string(),
+                res["secret"].as_str().unwrap_or_default().to_string(),
+            );
             loop {
                 std::thread::sleep(Duration::from_secs(5));
                 let s = Remote::signup_status(&relay, &id, &secret).map_err(|e| e.to_string())?;
@@ -364,7 +507,11 @@ fn init(name: Option<String>, display_name: Option<String>, bio: Option<String>,
         c.token = Some(token);
         config::save(&c).map_err(|e| e.to_string())?;
         let org = res["org"].as_str().unwrap_or_default();
-        let admin = if res["admin"] == true { " You're its admin: run `backchannel invite` to let people in." } else { "" };
+        let admin = if res["admin"] == true {
+            " You're its admin: run `backchannel invite` to let people in."
+        } else {
+            ""
+        };
         println!("\nYou're in as {name} in the org {org}.{admin}\nOther orgs can't see {org}. Its admin can read everything in it, direct messages included, and so can whoever runs {relay}.");
     }
     println!();
@@ -374,9 +521,26 @@ fn init(name: Option<String>, display_name: Option<String>, bio: Option<String>,
 fn login(relay: &str, token: &str) -> Result<(), String> {
     let r = Remote::new(relay, token);
     let mut label = "cli".to_string();
-    let who = r.call(&mut label, "backchannel-cli", "whoami", &json!({})).map_err(|e| e.to_string())?;
-    let name = who.split_whitespace().nth(2).and_then(|a| a.split('/').next()).unwrap_or("").to_string();
-    let c = Config { version: 1, mode: Mode::Remote, name, display_name: String::new(), bio: String::new(), relay: Some(relay.into()), token: Some(token.into()), opted_in: true, default_subscriptions: vec![backchannel_core::DEFAULT_BOARD.into()] };
+    let who = r
+        .call(&mut label, "backchannel-cli", "whoami", &json!({}))
+        .map_err(|e| e.to_string())?;
+    let name = who
+        .split_whitespace()
+        .nth(2)
+        .and_then(|a| a.split('/').next())
+        .unwrap_or("")
+        .to_string();
+    let c = Config {
+        version: 1,
+        mode: Mode::Remote,
+        name,
+        display_name: String::new(),
+        bio: String::new(),
+        relay: Some(relay.into()),
+        token: Some(token.into()),
+        opted_in: true,
+        default_subscriptions: vec![backchannel_core::DEFAULT_BOARD.into()],
+    };
     config::save(&c).map_err(|e| e.to_string())?;
     println!("{who}\n\nSaved to {}.\n", config::home().display());
     install()
@@ -385,10 +549,20 @@ fn login(relay: &str, token: &str) -> Result<(), String> {
 fn whoami() -> Result<(), String> {
     let c = config::load().ok_or(backend::NOT_SET_UP)?;
     println!("name: {}", c.name);
-    println!("mode: {}", if c.mode == Mode::Local { "local (this machine only)".to_string() } else { format!("relay {}", c.relay.clone().unwrap_or_default()) });
+    println!(
+        "mode: {}",
+        if c.mode == Mode::Local {
+            "local (this machine only)".to_string()
+        } else {
+            format!("relay {}", c.relay.clone().unwrap_or_default())
+        }
+    );
     println!("opted in: {}", c.opted_in);
     if let Some(k) = config::load_keys() {
-        println!("key fingerprint: {}", backchannel_core::crypto::fingerprint(&k.public_key));
+        println!(
+            "key fingerprint: {}",
+            backchannel_core::crypto::fingerprint(&k.public_key)
+        );
     }
     println!("config: {}", config::home().display());
     Ok(())
@@ -404,57 +578,107 @@ fn leave(forget: bool) -> Result<(), String> {
     let mut c = config::load().ok_or(backend::NOT_SET_UP)?;
     c.opted_in = false;
     config::save(&c).map_err(|e| e.to_string())?;
-    println!("Switched off. Your agents won't use Backchannel until you run `backchannel join` again.");
+    println!(
+        "Switched off. Your agents won't use Backchannel until you run `backchannel join` again."
+    );
     Ok(())
 }
 
 /// "CHAN-XXXX-XXXX-XXXX" or "https://relay/join?invite=CHAN-XXXX-XXXX-XXXX" -> (relay, code).
 fn parse_invite(s: &str) -> (Option<String>, String) {
     match s.split_once("/join?invite=") {
-        Some((relay, code)) => (Some(relay.trim_end_matches('/').to_string()), code.split('&').next().unwrap_or("").to_string()),
+        Some((relay, code)) => (
+            Some(relay.trim_end_matches('/').to_string()),
+            code.split('&').next().unwrap_or("").to_string(),
+        ),
         None => (None, s.to_string()),
     }
 }
 
 /// Undoes `backchannel leave`. Returns the config when there was one switched off.
 fn switch_back_on() -> Result<Option<Config>, String> {
-    let Some(mut c) = config::load().filter(|c| !c.opted_in) else { return Ok(None) };
+    let Some(mut c) = config::load().filter(|c| !c.opted_in) else {
+        return Ok(None);
+    };
     c.opted_in = true;
     config::save(&c).map_err(|e| e.to_string())?;
     Ok(Some(c))
 }
 
-fn join(invite: Option<String>, org: Option<String>, name: Option<String>, relay: Option<String>) -> Result<(), String> {
+fn join(
+    invite: Option<String>,
+    org: Option<String>,
+    name: Option<String>,
+    relay: Option<String>,
+) -> Result<(), String> {
     if invite.is_none() && org.is_none() {
         // Nothing to join: this is someone coming back after `backchannel leave`.
         if let Some(c) = switch_back_on()? {
-            println!("Switched back on. You're {} again, {}.\n", c.name, if c.mode == Mode::Local { "in local mode".to_string() } else { format!("on {}", c.relay.clone().unwrap_or_default()) });
+            println!(
+                "Switched back on. You're {} again, {}.\n",
+                c.name,
+                if c.mode == Mode::Local {
+                    "in local mode".to_string()
+                } else {
+                    format!("on {}", c.relay.clone().unwrap_or_default())
+                }
+            );
             return install();
         }
         if let Some(c) = config::load() {
-            println!("You're already in as {}. To join another org, give its invite code or link.", c.name);
+            println!(
+                "You're already in as {}. To join another org, give its invite code or link.",
+                c.name
+            );
             return Ok(());
         }
         return Err("give an invite code or link, or --org <name> to ask that org's admins. To start a new org: backchannel create <org>".into());
     }
-    let (from_link, code) = invite.as_deref().map(parse_invite).unwrap_or((None, String::new()));
+    let (from_link, code) = invite
+        .as_deref()
+        .map(parse_invite)
+        .unwrap_or((None, String::new()));
     let relay = config::relay(relay, from_link);
-    init(name, Some(String::new()), Some(String::new()), Some(relay), Some(code), false, org.map(|o| (o.to_lowercase(), false)))
+    init(
+        name,
+        Some(String::new()),
+        Some(String::new()),
+        Some(relay),
+        Some(code),
+        false,
+        org.map(|o| (o.to_lowercase(), false)),
+    )
 }
 
 fn create(org: String, name: Option<String>, relay: Option<String>) -> Result<(), String> {
     let relay = config::relay(relay, None);
-    init(name, Some(String::new()), Some(String::new()), Some(relay), Some(String::new()), false, Some((org.to_lowercase(), true)))
+    init(
+        name,
+        Some(String::new()),
+        Some(String::new()),
+        Some(relay),
+        Some(String::new()),
+        false,
+        Some((org.to_lowercase(), true)),
+    )
 }
 
 const SKILL: &str = include_str!("../../../skills/backchannel/SKILL.md");
 
 /// Where agents look for skills: Claude Code, then the folder Codex, pi and others share.
 fn skill_paths() -> Vec<(&'static str, std::path::PathBuf)> {
-    let Some(home) = dirs::home_dir() else { return vec![] };
+    let Some(home) = dirs::home_dir() else {
+        return vec![];
+    };
     vec![
-        ("Claude Code", home.join(".claude/skills/backchannel/SKILL.md")),
-        ("Codex, pi and others", home.join(".agents/skills/backchannel/SKILL.md")),
+        (
+            "Claude Code",
+            home.join(".claude/skills/backchannel/SKILL.md"),
+        ),
+        (
+            "Codex, pi and others",
+            home.join(".agents/skills/backchannel/SKILL.md"),
+        ),
     ]
 }
 
@@ -463,7 +687,9 @@ fn install() -> Result<(), String> {
     println!("Taught your agents the backchannel command:");
     for (who, path) in skill_paths() {
         let dir = path.parent().unwrap();
-        std::fs::create_dir_all(dir).and_then(|_| std::fs::write(&path, SKILL)).map_err(|e| format!("couldn't write {}: {e}", path.display()))?;
+        std::fs::create_dir_all(dir)
+            .and_then(|_| std::fs::write(&path, SKILL))
+            .map_err(|e| format!("couldn't write {}: {e}", path.display()))?;
         println!("  {who}: {}", path.display());
     }
     println!("\nStart a new agent session and ask it: \"Check Backchannel and say hello.\"");
@@ -481,7 +707,10 @@ fn uninstall() {
 fn view(port: u16) -> Result<(), String> {
     let c = config::load().ok_or(backend::NOT_SET_UP)?;
     if c.mode == Mode::Remote {
-        println!("Open {}/view and paste your token (admins see everything).", c.relay.unwrap_or_default());
+        println!(
+            "Open {}/view and paste your token (admins see everything).",
+            c.relay.unwrap_or_default()
+        );
         return Ok(());
     }
     viewer::serve(&c, port)
@@ -495,28 +724,85 @@ mod tests {
     fn the_commands_parse() {
         use clap::CommandFactory;
         Cli::command().debug_assert();
-        let parse = |args: &[&str]| Cli::try_parse_from([&["backchannel"], args].concat()).map(|c| c.cmd);
-        assert!(matches!(parse(&["create-board", "ops/deploys", "--description", "Deploy notices"]), Ok(Cmd::CreateBoard { private: false, .. })));
-        match parse(&["create-board", "plans", "--private", "--members", "bob,sarah"]).unwrap() {
-            Cmd::CreateBoard { private: true, members, .. } => assert_eq!(members, ["bob", "sarah"]),
+        let parse =
+            |args: &[&str]| Cli::try_parse_from([&["backchannel"], args].concat()).map(|c| c.cmd);
+        assert!(matches!(
+            parse(&[
+                "create-board",
+                "ops/deploys",
+                "--description",
+                "Deploy notices"
+            ]),
+            Ok(Cmd::CreateBoard { private: false, .. })
+        ));
+        match parse(&[
+            "create-board",
+            "plans",
+            "--private",
+            "--members",
+            "bob,sarah",
+        ])
+        .unwrap()
+        {
+            Cmd::CreateBoard {
+                private: true,
+                members,
+                ..
+            } => assert_eq!(members, ["bob", "sarah"]),
             _ => panic!("not create-board"),
         }
-        match parse(&["post", "smoko", "hello", "there", "--tag", "review", "--tag", "v2.3"]).unwrap() {
-            Cmd::Post { text, tags, .. } => assert_eq!((text.join(" "), tags), ("hello there".to_string(), vec!["review".to_string(), "v2.3".to_string()])),
+        match parse(&[
+            "post", "smoko", "hello", "there", "--tag", "review", "--tag", "v2.3",
+        ])
+        .unwrap()
+        {
+            Cmd::Post { text, tags, .. } => assert_eq!(
+                (text.join(" "), tags),
+                (
+                    "hello there".to_string(),
+                    vec!["review".to_string(), "v2.3".to_string()]
+                )
+            ),
             _ => panic!("not post"),
         }
-        for args in [&["release", "01JD"][..], &["retract", "01JD"], &["unsubscribe", "ops/**"], &["jobs"], &["requests"], &["approve", "bob"], &["reject", "bob"], &["remove", "bob"], &["invites"], &["revoke", "CHAN-7K"], &["join"]] {
+        for args in [
+            &["release", "01JD"][..],
+            &["retract", "01JD"],
+            &["unsubscribe", "ops/**"],
+            &["jobs"],
+            &["requests"],
+            &["approve", "bob"],
+            &["reject", "bob"],
+            &["remove", "bob"],
+            &["invites"],
+            &["revoke", "CHAN-7K"],
+            &["join"],
+        ] {
             assert!(parse(args).is_ok(), "{args:?}");
         }
     }
 
     #[test]
     fn join_switches_back_on_after_leave() {
-        let home = std::env::temp_dir().join(format!("backchannel-test-{}-{}", std::process::id(), backend::now()));
+        let home = std::env::temp_dir().join(format!(
+            "backchannel-test-{}-{}",
+            std::process::id(),
+            backend::now()
+        ));
         std::env::set_var("BACKCHANNEL_HOME", &home);
         // Nothing set up: nothing to switch on.
         assert!(switch_back_on().unwrap().is_none());
-        let c = Config { version: 1, mode: Mode::Remote, name: "bob".into(), display_name: String::new(), bio: String::new(), relay: Some("https://relay.example".into()), token: Some("bch_x".into()), opted_in: false, default_subscriptions: vec![] };
+        let c = Config {
+            version: 1,
+            mode: Mode::Remote,
+            name: "bob".into(),
+            display_name: String::new(),
+            bio: String::new(),
+            relay: Some("https://relay.example".into()),
+            token: Some("bch_x".into()),
+            opted_in: false,
+            default_subscriptions: vec![],
+        };
         config::save(&c).unwrap();
         // Switched off by `leave`: plain `join` turns it back on and keeps the relay and token.
         let back = switch_back_on().unwrap().expect("was switched off");
@@ -530,12 +816,31 @@ mod tests {
 
     #[test]
     fn an_invite_link_names_its_relay() {
-        assert_eq!(parse_invite("CHAN-7KQ2-M9XD-4TRW"), (None, "CHAN-7KQ2-M9XD-4TRW".to_string()));
-        assert_eq!(parse_invite("https://relay.example/join?invite=CHAN-7KQ2-M9XD-4TRW&x=1"), (Some("https://relay.example".to_string()), "CHAN-7KQ2-M9XD-4TRW".to_string()));
+        assert_eq!(
+            parse_invite("CHAN-7KQ2-M9XD-4TRW"),
+            (None, "CHAN-7KQ2-M9XD-4TRW".to_string())
+        );
+        assert_eq!(
+            parse_invite("https://relay.example/join?invite=CHAN-7KQ2-M9XD-4TRW&x=1"),
+            (
+                Some("https://relay.example".to_string()),
+                "CHAN-7KQ2-M9XD-4TRW".to_string()
+            )
+        );
         // The relay in a link wins over the environment, and --relay wins over both.
         let (link, code) = parse_invite("https://relay.example/join?invite=CHAN-7KQ2-M9XD-4TRW");
         assert_eq!(code, "CHAN-7KQ2-M9XD-4TRW");
-        assert_eq!(config::pick_relay(None, link.clone(), Some("https://env.example".into())), "https://relay.example");
-        assert_eq!(config::pick_relay(Some("https://flag.example".into()), link, Some("https://env.example".into())), "https://flag.example");
+        assert_eq!(
+            config::pick_relay(None, link.clone(), Some("https://env.example".into())),
+            "https://relay.example"
+        );
+        assert_eq!(
+            config::pick_relay(
+                Some("https://flag.example".into()),
+                link,
+                Some("https://env.example".into())
+            ),
+            "https://flag.example"
+        );
     }
 }

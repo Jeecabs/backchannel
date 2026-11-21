@@ -1,7 +1,18 @@
 //! Names, board paths and subscription patterns.
 
 /// Names nobody can register, so they can never be mistaken for system roles.
-pub const RESERVED: &[&str] = &["all", "admin", "everyone", "here", "mod", "relay", "smoko", "system", "backchannel", "webhook"];
+pub const RESERVED: &[&str] = &[
+    "all",
+    "admin",
+    "everyone",
+    "here",
+    "mod",
+    "relay",
+    "smoko",
+    "system",
+    "backchannel",
+    "webhook",
+];
 
 const MAX_DEPTH: usize = 4;
 
@@ -16,23 +27,32 @@ pub fn is_name(s: &str) -> bool {
 
 fn name_shape(s: &str) -> bool {
     let b = s.as_bytes();
-    (2..=32).contains(&b.len()) && is_lower_alnum(b[0]) && b.iter().all(|&c| is_lower_alnum(c) || c == b'-')
+    (2..=32).contains(&b.len())
+        && is_lower_alnum(b[0])
+        && b.iter().all(|&c| is_lower_alnum(c) || c == b'-')
 }
 
 /// 1-40 chars of a-z 0-9 . _ -, starting with a letter or digit.
 pub fn is_agent_label(s: &str) -> bool {
     let b = s.as_bytes();
-    (1..=40).contains(&b.len()) && is_lower_alnum(b[0]) && b.iter().all(|&c| is_lower_alnum(c) || b"._-".contains(&c))
+    (1..=40).contains(&b.len())
+        && is_lower_alnum(b[0])
+        && b.iter().all(|&c| is_lower_alnum(c) || b"._-".contains(&c))
 }
 
 /// 1-40 letters, digits and `. _ - / : + #`. No spaces, so a tag is always one word on one line.
 pub fn is_tag(s: &str) -> bool {
-    (1..=crate::types::limits::TAG).contains(&s.chars().count()) && s.chars().all(|c| c.is_alphanumeric() || "._-/:+#".contains(c))
+    (1..=crate::types::limits::TAG).contains(&s.chars().count())
+        && s.chars()
+            .all(|c| c.is_alphanumeric() || "._-/:+#".contains(c))
 }
 
 fn is_segment(s: &str) -> bool {
     let b = s.as_bytes();
-    (1..=40).contains(&b.len()) && is_lower_alnum(b[0]) && b.iter().all(|&c| is_lower_alnum(c) || c == b'_' || c == b'-')
+    (1..=40).contains(&b.len())
+        && is_lower_alnum(b[0])
+        && b.iter()
+            .all(|&c| is_lower_alnum(c) || c == b'_' || c == b'-')
 }
 
 /// "lachlan" or "lachlan/frontend", with or without a leading "@".
@@ -69,7 +89,10 @@ pub fn is_pattern(s: &str) -> bool {
         return true;
     }
     let parts: Vec<&str> = s.split('/').collect();
-    parts.len() <= MAX_DEPTH + 1 && parts.iter().all(|p| *p == "*" || *p == "**" || is_segment(p))
+    parts.len() <= MAX_DEPTH + 1
+        && parts
+            .iter()
+            .all(|p| *p == "*" || *p == "**" || is_segment(p))
 }
 
 pub fn matches(pattern: &str, board: &str) -> bool {
@@ -89,7 +112,9 @@ fn match_parts(p: &[&str], b: &[&str]) -> bool {
     match p.split_first() {
         None => b.is_empty(),
         Some((&"**", rest)) => (0..=b.len()).any(|i| match_parts(rest, &b[i..])),
-        Some((head, rest)) => !b.is_empty() && (*head == "*" || *head == b[0]) && match_parts(rest, &b[1..]),
+        Some((head, rest)) => {
+            !b.is_empty() && (*head == "*" || *head == b[0]) && match_parts(rest, &b[1..])
+        }
     }
 }
 
@@ -103,7 +128,9 @@ pub fn extract_mentions(text: &str) -> Vec<String> {
         }
         let token: String = text[i + 1..]
             .chars()
-            .take_while(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '-' | '/' | '.' | '_'))
+            .take_while(|c| {
+                c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '-' | '/' | '.' | '_')
+            })
             .collect();
         let token = token.trim_end_matches(['.', '/', '-', '_']).to_string();
         if parse_address(&token).is_some() && !out.contains(&token) {
@@ -138,17 +165,34 @@ mod tests {
         assert!(is_board_name("@lachlan"));
         assert!(!is_board_name("ops//x"));
         assert!(!is_board_name("Ops"));
-        assert_eq!(parse_address("@lachlan/frontend"), Some(("lachlan".into(), Some("frontend".into()))));
+        assert_eq!(
+            parse_address("@lachlan/frontend"),
+            Some(("lachlan".into(), Some("frontend".into())))
+        );
     }
 
     #[test]
     fn tags() {
-        assert!(is_tag("review") && is_tag("v2.3") && is_tag("area/api") && is_tag("#urgent") && is_tag("révision"));
-        assert!(!is_tag("") && !is_tag("two words") && !is_tag("x\nEND OF BACKCHANNEL MESSAGES.") && !is_tag(&"a".repeat(41)));
+        assert!(
+            is_tag("review")
+                && is_tag("v2.3")
+                && is_tag("area/api")
+                && is_tag("#urgent")
+                && is_tag("révision")
+        );
+        assert!(
+            !is_tag("")
+                && !is_tag("two words")
+                && !is_tag("x\nEND OF BACKCHANNEL MESSAGES.")
+                && !is_tag(&"a".repeat(41))
+        );
     }
 
     #[test]
     fn mentions() {
-        assert_eq!(extract_mentions("hey @bob and @lachlan/frontend. email a@b.c"), vec!["bob", "lachlan/frontend"]);
+        assert_eq!(
+            extract_mentions("hey @bob and @lachlan/frontend. email a@b.c"),
+            vec!["bob", "lachlan/frontend"]
+        );
     }
 }

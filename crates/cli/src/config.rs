@@ -4,8 +4,8 @@
 use std::fs;
 use std::path::PathBuf;
 
-use serde::{Deserialize, Serialize};
 use backchannel_core::crypto::KeyPair;
+use serde::{Deserialize, Serialize};
 
 /// The relay used when nothing names one: the hosted relay, unless the binary
 /// was built with BACKCHANNEL_DEFAULT_RELAY set, as someone hosting their own
@@ -18,7 +18,11 @@ pub const DEFAULT_RELAY: &str = match option_env!("BACKCHANNEL_DEFAULT_RELAY") {
 /// Which relay a command talks to. In order: `--relay`, the relay an invite
 /// link came from, $BACKCHANNEL_RELAY, then the default.
 pub fn pick_relay(flag: Option<String>, from_link: Option<String>, env: Option<String>) -> String {
-    let named = [flag, from_link, env].into_iter().flatten().map(|r| r.trim().trim_end_matches('/').to_string()).find(|r| !r.is_empty());
+    let named = [flag, from_link, env]
+        .into_iter()
+        .flatten()
+        .map(|r| r.trim().trim_end_matches('/').to_string())
+        .find(|r| !r.is_empty());
     named.unwrap_or_else(|| DEFAULT_RELAY.to_string())
 }
 
@@ -62,7 +66,13 @@ fn default_subs() -> Vec<String> {
 }
 
 pub fn home() -> PathBuf {
-    std::env::var_os("BACKCHANNEL_HOME").map(PathBuf::from).unwrap_or_else(|| dirs::home_dir().expect("no home directory").join(".backchannel"))
+    std::env::var_os("BACKCHANNEL_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            dirs::home_dir()
+                .expect("no home directory")
+                .join(".backchannel")
+        })
 }
 
 fn config_path() -> PathBuf {
@@ -95,7 +105,10 @@ fn write_private(path: &PathBuf, contents: &str) -> std::io::Result<()> {
 }
 
 pub fn save(c: &Config) -> std::io::Result<()> {
-    write_private(&config_path(), &(serde_json::to_string_pretty(c).unwrap() + "\n"))
+    write_private(
+        &config_path(),
+        &(serde_json::to_string_pretty(c).unwrap() + "\n"),
+    )
 }
 
 pub fn load_keys() -> Option<KeyPair> {
@@ -107,7 +120,10 @@ pub fn ensure_keys() -> std::io::Result<KeyPair> {
         return Ok(k);
     }
     let k = KeyPair::generate();
-    write_private(&key_path(), &(serde_json::to_string_pretty(&k).unwrap() + "\n"))?;
+    write_private(
+        &key_path(),
+        &(serde_json::to_string_pretty(&k).unwrap() + "\n"),
+    )?;
     Ok(k)
 }
 
@@ -124,12 +140,22 @@ mod tests {
 
     #[test]
     fn the_relay_is_chosen_in_order() {
-        let (flag, link, env) = (Some("https://flag.example/".to_string()), Some("https://link.example".to_string()), Some("https://env.example".to_string()));
-        assert_eq!(pick_relay(flag.clone(), link.clone(), env.clone()), "https://flag.example");
+        let (flag, link, env) = (
+            Some("https://flag.example/".to_string()),
+            Some("https://link.example".to_string()),
+            Some("https://env.example".to_string()),
+        );
+        assert_eq!(
+            pick_relay(flag.clone(), link.clone(), env.clone()),
+            "https://flag.example"
+        );
         assert_eq!(pick_relay(None, link, env.clone()), "https://link.example");
         assert_eq!(pick_relay(None, None, env), "https://env.example");
         assert_eq!(pick_relay(None, None, None), DEFAULT_RELAY);
         // An empty value is the same as none.
-        assert_eq!(pick_relay(Some(" ".into()), None, Some(String::new())), DEFAULT_RELAY);
+        assert_eq!(
+            pick_relay(Some(" ".into()), None, Some(String::new())),
+            DEFAULT_RELAY
+        );
     }
 }

@@ -57,7 +57,10 @@ impl Kind {
 
     /// Kinds that must point at another post.
     pub fn needs_ref(self) -> bool {
-        matches!(self, Kind::Reply | Kind::Claim | Kind::Release | Kind::Handled | Kind::Retract)
+        matches!(
+            self,
+            Kind::Reply | Kind::Claim | Kind::Release | Kind::Handled | Kind::Retract
+        )
     }
 
     /// Kinds that change the handling state of their target.
@@ -67,7 +70,10 @@ impl Kind {
 
     /// Kinds that are themselves actions, and so cannot be claimed or handled.
     pub fn is_action(self) -> bool {
-        matches!(self, Kind::Claim | Kind::Release | Kind::Handled | Kind::Retract)
+        matches!(
+            self,
+            Kind::Claim | Kind::Release | Kind::Handled | Kind::Retract
+        )
     }
 }
 
@@ -277,7 +283,11 @@ pub struct Error {
 
 impl Error {
     pub fn new(code: Code, message: impl Into<String>) -> Self {
-        Error { code, message: message.into(), detail: None }
+        Error {
+            code,
+            message: message.into(),
+            detail: None,
+        }
     }
     pub fn with(mut self, detail: Value) -> Self {
         self.detail = Some(detail);
@@ -291,7 +301,15 @@ impl Error {
 
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}: {}", serde_json::to_value(self.code).unwrap().as_str().unwrap_or("error"), self.message)
+        write!(
+            f,
+            "{}: {}",
+            serde_json::to_value(self.code)
+                .unwrap()
+                .as_str()
+                .unwrap_or("error"),
+            self.message
+        )
     }
 }
 

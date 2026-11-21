@@ -13,7 +13,12 @@ use crate::inbox::Inbox;
 use crate::sql::Sql;
 use crate::types::*;
 
-pub fn state<S: Sql>(auth: &Authority<S>, inbox: &Inbox<'_, S>, title: &str, extra: Value) -> Result<Value> {
+pub fn state<S: Sql>(
+    auth: &Authority<S>,
+    inbox: &Inbox<'_, S>,
+    title: &str,
+    extra: Value,
+) -> Result<Value> {
     let people: Vec<Value> = auth
         .identities()?
         .into_iter()
@@ -24,7 +29,11 @@ pub fn state<S: Sql>(auth: &Authority<S>, inbox: &Inbox<'_, S>, title: &str, ext
             v
         })
         .collect();
-    let open: Vec<Value> = auth.open_items(None, 50)?.into_iter().map(|(p, h)| json!({ "post": p, "handling": h })).collect();
+    let open: Vec<Value> = auth
+        .open_items(None, 50)?
+        .into_iter()
+        .map(|(p, h)| json!({ "post": p, "handling": h }))
+        .collect();
     Ok(json!({
         "title": title,
         "protocol": PROTOCOL,
@@ -42,7 +51,11 @@ pub fn feed<S: Sql>(auth: &Authority<S>, after: i64, limit: i64) -> Result<Value
         .feed(None, after, limit, true)?
         .into_iter()
         .map(|p| {
-            let target = if p.envelope.kind.is_handling() { p.envelope.ref_.clone() } else { Some(p.envelope.id.clone()) };
+            let target = if p.envelope.kind.is_handling() {
+                p.envelope.ref_.clone()
+            } else {
+                Some(p.envelope.id.clone())
+            };
             let handling = target.and_then(|t| auth.handling(&t).ok());
             let fp = fingerprint(&p.envelope.from.key);
             // Checked again for every row shown, against the stored envelope: a
@@ -61,8 +74,12 @@ fn inline_scripts(html: &str) -> Vec<&str> {
     let mut out = Vec::new();
     let mut rest = html;
     while let Some(open) = rest.find("<script") {
-        let Some(start) = rest[open..].find('>').map(|i| open + i + 1) else { break };
-        let Some(end) = rest[start..].find("</script>").map(|i| start + i) else { break };
+        let Some(start) = rest[open..].find('>').map(|i| open + i + 1) else {
+            break;
+        };
+        let Some(end) = rest[start..].find("</script>").map(|i| start + i) else {
+            break;
+        };
         out.push(&rest[start..end]);
         rest = &rest[end..];
     }
@@ -75,7 +92,10 @@ fn inline_scripts(html: &str) -> Vec<&str> {
 /// framing. A script injected through a rendering bug would not run, and could
 /// not send the token anywhere if it did.
 pub fn content_security_policy(html: &str) -> String {
-    let scripts: Vec<String> = inline_scripts(html).iter().map(|s| format!("'sha256-{}'", STANDARD.encode(Sha256::digest(s.as_bytes())))).collect();
+    let scripts: Vec<String> = inline_scripts(html)
+        .iter()
+        .map(|s| format!("'sha256-{}'", STANDARD.encode(Sha256::digest(s.as_bytes()))))
+        .collect();
     format!(
         "default-src 'none'; script-src {}; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; \
          img-src 'self' data:; connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
@@ -103,7 +123,12 @@ mod tests {
         assert_eq!(inline_scripts(page), vec!["alert(1);", "\nlet a = 1;\n"]);
         let csp = content_security_policy(page);
         // sha256 of "alert(1);", worked out independently.
-        assert!(csp.contains("script-src 'sha256-5jFwrAK0UV47oFbVg/iCCBbxD8X1w+QvoOUepu4C2YA=' 'sha256-"), "{csp}");
+        assert!(
+            csp.contains(
+                "script-src 'sha256-5jFwrAK0UV47oFbVg/iCCBbxD8X1w+QvoOUepu4C2YA=' 'sha256-"
+            ),
+            "{csp}"
+        );
         assert!(csp.contains("frame-ancestors 'none'") && csp.contains("connect-src 'self'"));
         assert!(content_security_policy("<p>no scripts</p>").contains("script-src 'none'"));
     }
@@ -116,16 +141,39 @@ mod tests {
             ("home.html", include_str!("../../../viewer/home.html"), 2),
         ] {
             assert_eq!(inline_scripts(page).len(), scripts, "{name}");
-            assert_eq!(page.matches("<script").count(), scripts, "{name}: a script the scanner missed");
+            assert_eq!(
+                page.matches("<script").count(),
+                scripts,
+                "{name}: a script the scanner missed"
+            );
             let csp = content_security_policy(page);
-            let script_src = csp.split(';').find(|d| d.trim().starts_with("script-src")).unwrap();
+            let script_src = csp
+                .split(';')
+                .find(|d| d.trim().starts_with("script-src"))
+                .unwrap();
             assert_eq!(script_src.matches("'sha256-").count(), scripts, "{name}");
-            assert!(!script_src.contains("unsafe-inline") && !script_src.contains("unsafe-eval"), "{name}");
+            assert!(
+                !script_src.contains("unsafe-inline") && !script_src.contains("unsafe-eval"),
+                "{name}"
+            );
             // Hashes only cover <script> blocks: an inline handler would be blocked, so there must be none.
-            for handler in [" onclick=", " onload=", " onerror=", " onsubmit=", " oninput=", "javascript:"] {
-                assert!(!page.contains(handler), "{name} has an inline {handler} that the policy would block");
+            for handler in [
+                " onclick=",
+                " onload=",
+                " onerror=",
+                " onsubmit=",
+                " oninput=",
+                "javascript:",
+            ] {
+                assert!(
+                    !page.contains(handler),
+                    "{name} has an inline {handler} that the policy would block"
+                );
             }
-            assert!(!page.contains("<script src"), "{name} loads a script from a URL the policy doesn't allow");
+            assert!(
+                !page.contains("<script src"),
+                "{name} loads a script from a URL the policy doesn't allow"
+            );
         }
     }
 }

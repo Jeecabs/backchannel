@@ -78,7 +78,10 @@ impl KeyPair {
 
     pub fn from_seed(seed: &[u8; 32]) -> KeyPair {
         let sk = SigningKey::from_bytes(seed);
-        KeyPair { public_key: b64(sk.verifying_key().as_bytes()), secret_key: b64(seed) }
+        KeyPair {
+            public_key: b64(sk.verifying_key().as_bytes()),
+            secret_key: b64(seed),
+        }
     }
 
     /// Accepts a base64url seed (as stored in a relay secret).
@@ -88,7 +91,9 @@ impl KeyPair {
     }
 
     fn signing_key(&self) -> SigningKey {
-        let seed: [u8; 32] = unb64(&self.secret_key).and_then(|b| b.try_into().ok()).expect("corrupt secret key");
+        let seed: [u8; 32] = unb64(&self.secret_key)
+            .and_then(|b| b.try_into().ok())
+            .expect("corrupt secret key");
         SigningKey::from_bytes(&seed)
     }
 
@@ -98,9 +103,15 @@ impl KeyPair {
 }
 
 pub fn verify(public_key: &str, msg: &[u8], sig: &str) -> bool {
-    let Some(pk) = unb64(public_key).and_then(|b| <[u8; 32]>::try_from(b).ok()) else { return false };
-    let Some(sig) = unb64(sig).and_then(|b| <[u8; 64]>::try_from(b).ok()) else { return false };
-    let Ok(vk) = VerifyingKey::from_bytes(&pk) else { return false };
+    let Some(pk) = unb64(public_key).and_then(|b| <[u8; 32]>::try_from(b).ok()) else {
+        return false;
+    };
+    let Some(sig) = unb64(sig).and_then(|b| <[u8; 64]>::try_from(b).ok()) else {
+        return false;
+    };
+    let Ok(vk) = VerifyingKey::from_bytes(&pk) else {
+        return false;
+    };
     vk.verify_strict(msg, &Signature::from_bytes(&sig)).is_ok()
 }
 
@@ -151,7 +162,14 @@ pub struct AuthClaims {
 const AUTH_PREFIX: &str = "backchannel-auth/0.1\n";
 
 /// Builds an `Authorization: Backchannel <claims>.<sig>` header value.
-pub fn sign_request(name: &str, keys: &KeyPair, method: &str, path: &str, body: &[u8], now_ms: i64) -> String {
+pub fn sign_request(
+    name: &str,
+    keys: &KeyPair,
+    method: &str,
+    path: &str,
+    body: &[u8],
+    now_ms: i64,
+) -> String {
     let claims = AuthClaims {
         name: name.to_string(),
         key: keys.public_key.clone(),
@@ -161,23 +179,41 @@ pub fn sign_request(name: &str, keys: &KeyPair, method: &str, path: &str, body: 
         body: sha256_b64(body),
     };
     let c = canonical(&serde_json::to_value(&claims).unwrap());
-    format!("Backchannel {}.{}", b64(c.as_bytes()), keys.sign(format!("{AUTH_PREFIX}{c}").as_bytes()))
+    format!(
+        "Backchannel {}.{}",
+        b64(c.as_bytes()),
+        keys.sign(format!("{AUTH_PREFIX}{c}").as_bytes())
+    )
 }
 
 /// Verifies signature, method, path, body hash and freshness. Key binding is the caller's job.
-pub fn verify_request(header: &str, method: &str, path: &str, body: &[u8], now_ms: i64) -> Option<AuthClaims> {
+pub fn verify_request(
+    header: &str,
+    method: &str,
+    path: &str,
+    body: &[u8],
+    now_ms: i64,
+) -> Option<AuthClaims> {
     let rest = header.strip_prefix("Backchannel ")?;
     let (c64, sig) = rest.split_once('.')?;
     let c = String::from_utf8(unb64(c64)?).ok()?;
     let claims: AuthClaims = serde_json::from_str(&c).ok()?;
-    if claims.method != method.to_uppercase() || claims.path != path || claims.body != sha256_b64(body) {
+    if claims.method != method.to_uppercase()
+        || claims.path != path
+        || claims.body != sha256_b64(body)
+    {
         return None;
     }
     if (parse_iso(&claims.ts)? - now_ms).abs() > crate::types::limits::CLOCK_SKEW_MS {
         return None;
     }
     let recanon = canonical(&serde_json::to_value(&claims).ok()?);
-    verify(&claims.key, format!("{AUTH_PREFIX}{recanon}").as_bytes(), sig).then_some(claims)
+    verify(
+        &claims.key,
+        format!("{AUTH_PREFIX}{recanon}").as_bytes(),
+        sig,
+    )
+    .then_some(claims)
 }
 
 // ---- ids and time -----------------------------------------------------------
@@ -205,7 +241,9 @@ pub fn random_code(n: usize) -> String {
     let mut rnd = vec![0u8; n];
     getrandom::getrandom(&mut rnd).expect("system randomness unavailable");
     // 256 is a multiple of 32, so the remainder is uniform.
-    rnd.iter().map(|b| CROCKFORD[(b % 32) as usize] as char).collect()
+    rnd.iter()
+        .map(|b| CROCKFORD[(b % 32) as usize] as char)
+        .collect()
 }
 
 pub fn is_ulid(s: &str) -> bool {
@@ -219,7 +257,9 @@ pub fn iso(ms: i64) -> String {
 }
 
 pub fn parse_iso(s: &str) -> Option<i64> {
-    chrono::DateTime::parse_from_rfc3339(s).ok().map(|d| d.timestamp_millis())
+    chrono::DateTime::parse_from_rfc3339(s)
+        .ok()
+        .map(|d| d.timestamp_millis())
 }
 
 #[cfg(test)]

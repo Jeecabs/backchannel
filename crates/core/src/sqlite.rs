@@ -22,13 +22,21 @@ fn db_err(e: rusqlite::Error) -> Error {
 impl Sqlite {
     pub fn open(path: &Path) -> Result<Sqlite> {
         let conn = Connection::open(path).map_err(db_err)?;
-        conn.busy_timeout(std::time::Duration::from_secs(10)).map_err(db_err)?;
-        conn.execute_batch("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;").map_err(db_err)?;
-        Ok(Sqlite { conn, depth: Cell::new(0) })
+        conn.busy_timeout(std::time::Duration::from_secs(10))
+            .map_err(db_err)?;
+        conn.execute_batch("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;")
+            .map_err(db_err)?;
+        Ok(Sqlite {
+            conn,
+            depth: Cell::new(0),
+        })
     }
 
     pub fn memory() -> Result<Sqlite> {
-        Ok(Sqlite { conn: Connection::open_in_memory().map_err(db_err)?, depth: Cell::new(0) })
+        Ok(Sqlite {
+            conn: Connection::open_in_memory().map_err(db_err)?,
+            depth: Cell::new(0),
+        })
     }
 }
 
@@ -47,9 +55,15 @@ impl Sql for Sqlite {
 
     fn query(&self, sql: &str, params: &[Val]) -> Result<Vec<Row>> {
         let mut stmt = self.conn.prepare_cached(sql).map_err(db_err)?;
-        let names: Vec<String> = stmt.column_names().into_iter().map(str::to_string).collect();
+        let names: Vec<String> = stmt
+            .column_names()
+            .into_iter()
+            .map(str::to_string)
+            .collect();
         let vals: Vec<SqlValue> = params.iter().map(to_sql).collect();
-        let mut rows = stmt.query(rusqlite::params_from_iter(vals)).map_err(db_err)?;
+        let mut rows = stmt
+            .query(rusqlite::params_from_iter(vals))
+            .map_err(db_err)?;
         let mut out = Vec::new();
         while let Some(r) = rows.next().map_err(db_err)? {
             let mut m = Map::new();
@@ -71,7 +85,8 @@ impl Sql for Sqlite {
     fn run(&self, sql: &str, params: &[Val]) -> Result<()> {
         let mut stmt = self.conn.prepare_cached(sql).map_err(db_err)?;
         let vals: Vec<SqlValue> = params.iter().map(to_sql).collect();
-        stmt.execute(rusqlite::params_from_iter(vals)).map_err(db_err)?;
+        stmt.execute(rusqlite::params_from_iter(vals))
+            .map_err(db_err)?;
         Ok(())
     }
 

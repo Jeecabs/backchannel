@@ -94,14 +94,26 @@ pub struct Inbox<'a, S: Sql> {
 
 impl<'a, S: Sql> Inbox<'a, S> {
     /// Creates the inbox tables if needed.
-    pub fn new(auth: &'a Authority<S>, check_visibility: bool, default_subscriptions: Vec<String>) -> Result<Self> {
+    pub fn new(
+        auth: &'a Authority<S>,
+        check_visibility: bool,
+        default_subscriptions: Vec<String>,
+    ) -> Result<Self> {
         auth.sql.batch(SCHEMA)?;
         Ok(Self::attach(auth, check_visibility, default_subscriptions))
     }
 
     /// For storage whose schema is already set up.
-    pub fn attach(auth: &'a Authority<S>, check_visibility: bool, default_subscriptions: Vec<String>) -> Self {
-        Inbox { auth, check_visibility, default_subscriptions }
+    pub fn attach(
+        auth: &'a Authority<S>,
+        check_visibility: bool,
+        default_subscriptions: Vec<String>,
+    ) -> Self {
+        Inbox {
+            auth,
+            check_visibility,
+            default_subscriptions,
+        }
     }
 
     fn sql(&self) -> &S {
@@ -124,15 +136,36 @@ impl<'a, S: Sql> Inbox<'a, S> {
         let now = self.auth.now();
         // What an agent says about itself is shown to everyone in the directory.
         let line = |s: Option<String>, n: usize| s.map(|s| clip(&clean_line(&s), n));
-        let info = AgentInfo { client: line(info.client, limits::CLIENT), status: line(info.status, limits::STATUS), description: line(info.description, limits::AGENT_DESCRIPTION) };
+        let info = AgentInfo {
+            client: line(info.client, limits::CLIENT),
+            status: line(info.status, limits::STATUS),
+            description: line(info.description, limits::AGENT_DESCRIPTION),
+        };
         tx(self.sql(), || {
-            if self.sql().one("SELECT 1 AS x FROM agents WHERE org = ? AND address = ?", p![self.org(), &addr])?.is_none() {
+            if self
+                .sql()
+                .one(
+                    "SELECT 1 AS x FROM agents WHERE org = ? AND address = ?",
+                    p![self.org(), &addr],
+                )?
+                .is_none()
+            {
                 self.sql().run(
                     "INSERT INTO agents (org, address, name, label, client, status, description, created_at, last_seen) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     p![self.org(), &addr, name, label, info.client.clone().unwrap_or_default(), info.status.clone().unwrap_or_default(), info.description.clone().unwrap_or_default(), now, now],
                 )?;
-                let top = self.sql().one("SELECT MAX(dseq) AS d FROM deliveries WHERE org = ?", p![self.org()])?.map(|r| int(&r, "d")).unwrap_or(0);
-                self.sql().run("INSERT OR REPLACE INTO cursors (org, agent, dseq) VALUES (?, ?, ?)", p![self.org(), &addr, top])?;
+                let top = self
+                    .sql()
+                    .one(
+                        "SELECT MAX(dseq) AS d FROM deliveries WHERE org = ?",
+                        p![self.org()],
+                    )?
+                    .map(|r| int(&r, "d"))
+                    .unwrap_or(0);
+                self.sql().run(
+                    "INSERT OR REPLACE INTO cursors (org, agent, dseq) VALUES (?, ?, ?)",
+                    p![self.org(), &addr, top],
+                )?;
                 for pat in &self.default_subscriptions {
                     if is_pattern(pat) {
                         self.sql().run("INSERT OR IGNORE INTO subscriptions (org, agent, pattern, kinds, created_at) VALUES (?, ?, ?, NULL, ?)", p![self.org(), &addr, pat, now])?;
@@ -140,13 +173,25 @@ impl<'a, S: Sql> Inbox<'a, S> {
                 }
                 // Board traffic starts from now, but anything addressed to this person
                 // recently (direct messages, mentions) is waiting for the new agent.
-                let agent = Agent { address: addr.clone(), name: name.into(), label: label.into(), client: String::new(), status: String::new(), description: String::new(), last_seen: iso(now) };
+                let agent = Agent {
+                    address: addr.clone(),
+                    name: name.into(),
+                    label: label.into(),
+                    client: String::new(),
+                    status: String::new(),
+                    description: String::new(),
+                    last_seen: iso(now),
+                };
                 let from = (self.auth.head()? - limits::FEED_PAGE).max(0);
                 for post in self.auth.feed(None, from, limits::FEED_PAGE, false)? {
                     if now - parse_iso(&post.received_at).unwrap_or(0) > BACKFILL_MS {
                         continue;
                     }
-                    let personal: Vec<String> = self.reasons(&post, &agent, &[])?.into_iter().filter(|r| r == "direct message" || r == "mentions you").collect();
+                    let personal: Vec<String> = self
+                        .reasons(&post, &agent, &[])?
+                        .into_iter()
+                        .filter(|r| r == "direct message" || r == "mentions you")
+                        .collect();
                     if !personal.is_empty() {
                         self.sql().run(
                             "INSERT OR IGNORE INTO deliveries (org, agent, post, gseq, reasons) VALUES (?, ?, ?, ?, ?)",
@@ -162,7 +207,11 @@ impl<'a, S: Sql> Inbox<'a, S> {
             }
             Ok(())
         })?;
-        Ok(self.agents(None)?.into_iter().find(|a| a.address == addr).expect("just written"))
+        Ok(self
+            .agents(None)?
+            .into_iter()
+            .find(|a| a.address == addr)
+            .expect("just written"))
     }
 
     /// Agents known here, optionally only one person's.
@@ -185,15 +234,25 @@ impl<'a, S: Sql> Inbox<'a, S> {
 
     // ---- subscriptions -----------------------------------------------------
 
-    pub fn subscribe(&self, address: &str, pattern: &str, kinds: Option<Vec<Kind>>) -> Result<Vec<Subscription>> {
+    pub fn subscribe(
+        &self,
+        address: &str,
+        pattern: &str,
+        kinds: Option<Vec<Kind>>,
+    ) -> Result<Vec<Subscription>> {
         if !is_pattern(pattern) {
             return err(Code::Invalid, format!("\"{pattern}\" is not a valid pattern: use a board name, * for one segment, ** for any depth"));
         }
         let owner = address.split('/').next().unwrap_or("");
         if dm_owner(pattern).is_some_and(|o| o != owner) {
-            return err(Code::Forbidden, "you can only subscribe to your own direct messages");
+            return err(
+                Code::Forbidden,
+                "you can only subscribe to your own direct messages",
+            );
         }
-        let kinds = kinds.filter(|k| !k.is_empty()).map(|k| serde_json::to_string(&k).unwrap());
+        let kinds = kinds
+            .filter(|k| !k.is_empty())
+            .map(|k| serde_json::to_string(&k).unwrap());
         self.sql().run(
             "INSERT OR REPLACE INTO subscriptions (org, agent, pattern, kinds, created_at) VALUES (?, ?, ?, ?, ?)",
             p![self.org(), address, pattern, kinds, self.auth.now()],
@@ -202,7 +261,10 @@ impl<'a, S: Sql> Inbox<'a, S> {
     }
 
     pub fn unsubscribe(&self, address: &str, pattern: &str) -> Result<Vec<Subscription>> {
-        self.sql().run("DELETE FROM subscriptions WHERE org = ? AND agent = ? AND pattern = ?", p![self.org(), address, pattern])?;
+        self.sql().run(
+            "DELETE FROM subscriptions WHERE org = ? AND agent = ? AND pattern = ?",
+            p![self.org(), address, pattern],
+        )?;
         self.subscriptions(address)
     }
 
@@ -218,7 +280,14 @@ impl<'a, S: Sql> Inbox<'a, S> {
     // ---- fan-out -----------------------------------------------------------
 
     fn meta(&self, key: &str) -> Result<i64> {
-        Ok(self.sql().one("SELECT value FROM meta WHERE org = ? AND key = ?", p![self.org(), key])?.map(|r| int(&r, "value")).unwrap_or(0))
+        Ok(self
+            .sql()
+            .one(
+                "SELECT value FROM meta WHERE org = ? AND key = ?",
+                p![self.org(), key],
+            )?
+            .map(|r| int(&r, "value"))
+            .unwrap_or(0))
     }
 
     fn set_meta(&self, key: &str, value: i64) -> Result<()> {
@@ -241,13 +310,21 @@ impl<'a, S: Sql> Inbox<'a, S> {
             let done = tx(self.sql(), || {
                 let after = self.meta("fanout_gseq")?;
                 let posts = self.auth.feed(None, after, 200, true)?;
-                let Some(last) = posts.last().map(|p| p.gseq) else { return Ok(true) };
+                let Some(last) = posts.last().map(|p| p.gseq) else {
+                    return Ok(true);
+                };
                 let agents = self.agents(None)?;
-                let subs = self.sql().query("SELECT agent, pattern, kinds FROM subscriptions WHERE org = ?", p![self.org()])?;
+                let subs = self.sql().query(
+                    "SELECT agent, pattern, kinds FROM subscriptions WHERE org = ?",
+                    p![self.org()],
+                )?;
                 for post in &posts {
                     for a in &agents {
-                        let mine: Vec<(String, Option<String>)> =
-                            subs.iter().filter(|s| text(s, "agent") == a.address).map(|s| (text(s, "pattern"), opt_text(s, "kinds"))).collect();
+                        let mine: Vec<(String, Option<String>)> = subs
+                            .iter()
+                            .filter(|s| text(s, "agent") == a.address)
+                            .map(|s| (text(s, "pattern"), opt_text(s, "kinds")))
+                            .collect();
                         let reasons = self.reasons(post, a, &mine)?;
                         if reasons.is_empty() {
                             continue;
@@ -271,22 +348,40 @@ impl<'a, S: Sql> Inbox<'a, S> {
     }
 
     /// Why (if at all) a post belongs in an agent's inbox.
-    fn reasons(&self, post: &StoredPost, agent: &Agent, subs: &[(String, Option<String>)]) -> Result<Vec<String>> {
+    fn reasons(
+        &self,
+        post: &StoredPost,
+        agent: &Agent,
+        subs: &[(String, Option<String>)],
+    ) -> Result<Vec<String>> {
         let e = &post.envelope;
         if e.from.address() == agent.address || post.retracted {
             return Ok(vec![]);
         }
-        if e.expires.as_deref().and_then(parse_iso).is_some_and(|x| x < self.auth.now()) {
+        if e.expires
+            .as_deref()
+            .and_then(parse_iso)
+            .is_some_and(|x| x < self.auth.now())
+        {
             return Ok(vec![]);
         }
-        if self.check_visibility && !self.auth.can_read(Some(&agent.name), &e.board, Some(&e.from.name))? {
+        if self.check_visibility
+            && !self
+                .auth
+                .can_read(Some(&agent.name), &e.board, Some(&e.from.name))?
+        {
             return Ok(vec![]);
         }
         let mut out = Vec::new();
         let mentions = e.mentions.clone().unwrap_or_default();
-        let named_agents: Vec<&String> = mentions.iter().filter(|m| m.contains('/') && parse_address(m).is_some_and(|(n, _)| n == agent.name)).collect();
+        let named_agents: Vec<&String> = mentions
+            .iter()
+            .filter(|m| m.contains('/') && parse_address(m).is_some_and(|(n, _)| n == agent.name))
+            .collect();
 
-        if dm_owner(&e.board) == Some(agent.name.as_str()) && (named_agents.is_empty() || named_agents.contains(&&agent.address)) {
+        if dm_owner(&e.board) == Some(agent.name.as_str())
+            && (named_agents.is_empty() || named_agents.contains(&&agent.address))
+        {
             out.push("direct message".to_string());
         }
         if mentions.contains(&agent.address) || mentions.contains(&agent.name) {
@@ -295,7 +390,15 @@ impl<'a, S: Sql> Inbox<'a, S> {
         if let Some(r) = &e.ref_ {
             if let Some(target) = self.auth.post(r)? {
                 if target.envelope.from.address() == agent.address {
-                    out.push(if e.kind == Kind::Reply { "reply to your post".into() } else { format!("{} on your {}", e.kind.as_str(), target.envelope.kind.as_str()) });
+                    out.push(if e.kind == Kind::Reply {
+                        "reply to your post".into()
+                    } else {
+                        format!(
+                            "{} on your {}",
+                            e.kind.as_str(),
+                            target.envelope.kind.as_str()
+                        )
+                    });
                 }
             }
         }
@@ -303,7 +406,8 @@ impl<'a, S: Sql> Inbox<'a, S> {
             if !matches(pattern, &e.board) {
                 continue;
             }
-            let kinds: Option<Vec<Kind>> = kinds.as_deref().and_then(|k| serde_json::from_str(k).ok());
+            let kinds: Option<Vec<Kind>> =
+                kinds.as_deref().and_then(|k| serde_json::from_str(k).ok());
             if kinds.is_some_and(|k| !k.contains(&e.kind)) {
                 continue;
             }
@@ -316,7 +420,14 @@ impl<'a, S: Sql> Inbox<'a, S> {
     // ---- reading -----------------------------------------------------------
 
     fn cursor(&self, address: &str) -> Result<i64> {
-        Ok(self.sql().one("SELECT dseq FROM cursors WHERE org = ? AND agent = ?", p![self.org(), address])?.map(|r| int(&r, "dseq")).unwrap_or(0))
+        Ok(self
+            .sql()
+            .one(
+                "SELECT dseq FROM cursors WHERE org = ? AND agent = ?",
+                p![self.org(), address],
+            )?
+            .map(|r| int(&r, "dseq"))
+            .unwrap_or(0))
     }
 
     /// New deliveries after the agent's cursor. Advances the cursor unless `peek`.
@@ -328,15 +439,35 @@ impl<'a, S: Sql> Inbox<'a, S> {
         )?;
         let mut items = Vec::new();
         for r in &rows {
-            let Some(post) = self.auth.post(&text(r, "post"))? else { continue };
-            let handling = self.auth.handling(post.envelope.ref_.as_deref().filter(|_| post.envelope.kind.is_handling()).unwrap_or(&post.envelope.id))?;
-            items.push(Delivery { dseq: int(r, "dseq"), reasons: serde_json::from_str(&text(r, "reasons")).unwrap_or_default(), post, handling });
+            let Some(post) = self.auth.post(&text(r, "post"))? else {
+                continue;
+            };
+            let handling = self.auth.handling(
+                post.envelope
+                    .ref_
+                    .as_deref()
+                    .filter(|_| post.envelope.kind.is_handling())
+                    .unwrap_or(&post.envelope.id),
+            )?;
+            items.push(Delivery {
+                dseq: int(r, "dseq"),
+                reasons: serde_json::from_str(&text(r, "reasons")).unwrap_or_default(),
+                post,
+                handling,
+            });
         }
         let last = rows.last().map(|r| int(r, "dseq")).unwrap_or(cursor);
         if !peek && last > cursor {
             self.ack(address, last)?;
         }
-        let remaining = self.sql().one("SELECT COUNT(*) AS n FROM deliveries WHERE org = ? AND agent = ? AND dseq > ?", p![self.org(), address, last])?.map(|r| int(&r, "n")).unwrap_or(0);
+        let remaining = self
+            .sql()
+            .one(
+                "SELECT COUNT(*) AS n FROM deliveries WHERE org = ? AND agent = ? AND dseq > ?",
+                p![self.org(), address, last],
+            )?
+            .map(|r| int(&r, "n"))
+            .unwrap_or(0);
         Ok((items, remaining))
     }
 
@@ -349,6 +480,13 @@ impl<'a, S: Sql> Inbox<'a, S> {
 
     pub fn unread(&self, address: &str) -> Result<i64> {
         let c = self.cursor(address)?;
-        Ok(self.sql().one("SELECT COUNT(*) AS n FROM deliveries WHERE org = ? AND agent = ? AND dseq > ?", p![self.org(), address, c])?.map(|r| int(&r, "n")).unwrap_or(0))
+        Ok(self
+            .sql()
+            .one(
+                "SELECT COUNT(*) AS n FROM deliveries WHERE org = ? AND agent = ? AND dseq > ?",
+                p![self.org(), address, c],
+            )?
+            .map(|r| int(&r, "n"))
+            .unwrap_or(0))
     }
 }

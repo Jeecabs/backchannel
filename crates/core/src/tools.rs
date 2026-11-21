@@ -30,7 +30,9 @@ pub enum Outcome {
     Text(String),
     /// Nothing is waiting yet. The runtime should poll `unread` until something
     /// arrives or the timeout passes, then call `inbox`.
-    Wait { timeout_ms: i64 },
+    Wait {
+        timeout_ms: i64,
+    },
 }
 
 #[derive(Default, Clone, Debug)]
@@ -54,7 +56,11 @@ impl<'a, S: Sql> Ctx<'a, S> {
 
     pub fn publish(&self, d: Draft) -> Result<StoredPost> {
         let now = self.auth.now();
-        let mut mentions: Vec<String> = d.mentions.iter().map(|m| m.trim_start_matches('@').to_string()).collect();
+        let mut mentions: Vec<String> = d
+            .mentions
+            .iter()
+            .map(|m| m.trim_start_matches('@').to_string())
+            .collect();
         for m in extract_mentions(&d.body) {
             if !mentions.contains(&m) {
                 mentions.push(m);
@@ -64,8 +70,16 @@ impl<'a, S: Sql> Ctx<'a, S> {
             v: PROTOCOL.into(),
             id: ulid(now),
             board: d.board,
-            from: Author { name: self.me.name.clone(), agent: self.label.clone(), key: self.me.keys.public_key.clone() },
-            kind: d.kind.unwrap_or(if d.ref_.is_some() { Kind::Reply } else { Kind::Note }),
+            from: Author {
+                name: self.me.name.clone(),
+                agent: self.label.clone(),
+                key: self.me.keys.public_key.clone(),
+            },
+            kind: d.kind.unwrap_or(if d.ref_.is_some() {
+                Kind::Reply
+            } else {
+                Kind::Note
+            }),
             // Stray carriage returns and escape codes are dropped here, so a
             // post made through a tool is never refused for them.
             body: clean(&d.body),
@@ -76,7 +90,10 @@ impl<'a, S: Sql> Ctx<'a, S> {
             data: d.data.filter(|m| !m.is_empty()),
             lease: d.lease,
             ts: iso(now),
-            expires: d.ttl_seconds.filter(|t| *t > 0).map(|t| iso(now + t * 1000)),
+            expires: d
+                .ttl_seconds
+                .filter(|t| *t > 0)
+                .map(|t| iso(now + t * 1000)),
             ext: None,
             sig: String::new(),
         };
@@ -86,8 +103,15 @@ impl<'a, S: Sql> Ctx<'a, S> {
     }
 
     fn target(&self, id: &str) -> Result<StoredPost> {
-        let p = self.auth.post(id)?.ok_or_else(|| Error::new(Code::NotFound, format!("post {id} not found")))?;
-        if !self.auth.can_read(Some(&self.me.name), &p.envelope.board, Some(&p.envelope.from.name))? {
+        let p = self
+            .auth
+            .post(id)?
+            .ok_or_else(|| Error::new(Code::NotFound, format!("post {id} not found")))?;
+        if !self.auth.can_read(
+            Some(&self.me.name),
+            &p.envelope.board,
+            Some(&p.envelope.from.name),
+        )? {
             return err(Code::NotFound, format!("post {id} not found"));
         }
         Ok(p)
@@ -102,7 +126,16 @@ impl<'a, S: Sql> Ctx<'a, S> {
             kind: Some(kind),
             ref_: Some(id.clone()),
             data: args.get("data").and_then(|d| d.as_object().cloned()),
-            lease: if kind == Kind::Claim { Some(opt_int(args, "lease_seconds").unwrap_or(limits::LEASE_DEFAULT as i64).clamp(limits::LEASE_MIN as i64, limits::LEASE_MAX as i64) as u32) } else { None },
+            lease: if kind == Kind::Claim {
+                Some(
+                    opt_int(args, "lease_seconds")
+                        .unwrap_or(limits::LEASE_DEFAULT as i64)
+                        .clamp(limits::LEASE_MIN as i64, limits::LEASE_MAX as i64)
+                        as u32,
+                )
+            } else {
+                None
+            },
             ..Default::default()
         })?;
         let h = self.auth.handling(&id)?;
@@ -113,14 +146,25 @@ impl<'a, S: Sql> Ctx<'a, S> {
             Kind::Handled => "Marked handled. Everyone can see who dealt with it.",
             _ => "Done.",
         };
-        Ok(Outcome::Text(format!("{what}\n  post {id} is now {state}\n  your {} is {}", kind.as_str(), p.envelope.id)))
+        Ok(Outcome::Text(format!(
+            "{what}\n  post {id} is now {state}\n  your {} is {}",
+            kind.as_str(),
+            p.envelope.id
+        )))
     }
 }
 
 /// A compact, machine-readable peek at what's unread, for status lines and
 /// notifications (the Claude Code mod). Does not mark anything read.
 pub fn unread_summary<S: Sql>(ctx: &mut Ctx<'_, S>, latest: i64) -> Result<Value> {
-    ctx.inbox.touch_agent(&ctx.me.name, &ctx.label, AgentInfo { client: Some(ctx.client.clone()), ..Default::default() })?;
+    ctx.inbox.touch_agent(
+        &ctx.me.name,
+        &ctx.label,
+        AgentInfo {
+            client: Some(ctx.client.clone()),
+            ..Default::default()
+        },
+    )?;
     ctx.inbox.fanout()?;
     let addr = ctx.address();
     let unread = ctx.inbox.unread(&addr)?;
@@ -140,7 +184,14 @@ pub fn unread_summary<S: Sql>(ctx: &mut Ctx<'_, S>, latest: i64) -> Result<Value
 
 /// Runs one tool. Returns Ok(None) for names this layer doesn't know, so a runtime can add its own.
 pub fn call<S: Sql>(ctx: &mut Ctx<'_, S>, name: &str, args: &Value) -> Result<Option<Outcome>> {
-    ctx.inbox.touch_agent(&ctx.me.name, &ctx.label, AgentInfo { client: Some(ctx.client.clone()), ..Default::default() })?;
+    ctx.inbox.touch_agent(
+        &ctx.me.name,
+        &ctx.label,
+        AgentInfo {
+            client: Some(ctx.client.clone()),
+            ..Default::default()
+        },
+    )?;
     ctx.inbox.fanout()?;
     let me = ctx.me.name.clone();
     let out = match name {
@@ -154,7 +205,11 @@ pub fn call<S: Sql>(ctx: &mut Ctx<'_, S>, name: &str, args: &Value) -> Result<Op
             let agent = ctx.inbox.touch_agent(
                 &me,
                 &ctx.label,
-                AgentInfo { client: Some(ctx.client.clone()), status: opt_str(args, "status"), description: opt_str(args, "description") },
+                AgentInfo {
+                    client: Some(ctx.client.clone()),
+                    status: opt_str(args, "status"),
+                    description: opt_str(args, "description"),
+                },
             )?;
             let id = ctx.auth.identity(&me)?;
             let subs = ctx.inbox.subscriptions(&agent.address)?;
@@ -167,9 +222,17 @@ pub fn call<S: Sql>(ctx: &mut Ctx<'_, S>, name: &str, args: &Value) -> Result<Op
                 unread = ctx.inbox.unread(&agent.address)?,
             ))
         }
-        "directory" => Outcome::Text(render::directory(&ctx.auth.identities()?, &ctx.inbox.agents(None)?)),
+        "directory" => Outcome::Text(render::directory(
+            &ctx.auth.identities()?,
+            &ctx.inbox.agents(None)?,
+        )),
         "boards" => {
-            let subs: Vec<String> = ctx.inbox.subscriptions(&ctx.address())?.into_iter().map(|s| s.pattern).collect();
+            let subs: Vec<String> = ctx
+                .inbox
+                .subscriptions(&ctx.address())?
+                .into_iter()
+                .map(|s| s.pattern)
+                .collect();
             Outcome::Text(render::boards(&ctx.auth.boards(Some(&me))?, &subs))
         }
         "create_board" => {
@@ -178,7 +241,11 @@ pub fn call<S: Sql>(ctx: &mut Ctx<'_, S>, name: &str, args: &Value) -> Result<Op
                 BoardSpec {
                     name: req_str(args, "name")?,
                     description: opt_str(args, "description"),
-                    visibility: Some(if opt_bool(args, "private") { Visibility::Private } else { Visibility::Public }),
+                    visibility: Some(if opt_bool(args, "private") {
+                        Visibility::Private
+                    } else {
+                        Visibility::Public
+                    }),
                     members: opt_list(args, "members"),
                 },
             )?;
@@ -187,37 +254,93 @@ pub fn call<S: Sql>(ctx: &mut Ctx<'_, S>, name: &str, args: &Value) -> Result<Op
         }
         "subscribe" => {
             let kinds = opt_list(args, "kinds")
-                .map(|ks| ks.iter().map(|k| Kind::parse(k).ok_or_else(|| Error::new(Code::Invalid, format!("unknown kind \"{k}\"")))).collect::<Result<Vec<_>>>())
+                .map(|ks| {
+                    ks.iter()
+                        .map(|k| {
+                            Kind::parse(k).ok_or_else(|| {
+                                Error::new(Code::Invalid, format!("unknown kind \"{k}\""))
+                            })
+                        })
+                        .collect::<Result<Vec<_>>>()
+                })
                 .transpose()?;
-            let subs = ctx.inbox.subscribe(&ctx.address(), &req_str(args, "pattern")?, kinds)?;
-            Outcome::Text(format!("Subscribed. You now follow: {}", subs.iter().map(|s| s.pattern.clone()).collect::<Vec<_>>().join(", ")))
+            let subs = ctx
+                .inbox
+                .subscribe(&ctx.address(), &req_str(args, "pattern")?, kinds)?;
+            Outcome::Text(format!(
+                "Subscribed. You now follow: {}",
+                subs.iter()
+                    .map(|s| s.pattern.clone())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ))
         }
         "unsubscribe" => {
-            let subs = ctx.inbox.unsubscribe(&ctx.address(), &req_str(args, "pattern")?)?;
-            Outcome::Text(format!("Unsubscribed. You now follow: {}", if subs.is_empty() { "nothing".into() } else { subs.iter().map(|s| s.pattern.clone()).collect::<Vec<_>>().join(", ") }))
+            let subs = ctx
+                .inbox
+                .unsubscribe(&ctx.address(), &req_str(args, "pattern")?)?;
+            Outcome::Text(format!(
+                "Unsubscribed. You now follow: {}",
+                if subs.is_empty() {
+                    "nothing".into()
+                } else {
+                    subs.iter()
+                        .map(|s| s.pattern.clone())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                }
+            ))
         }
         "post" => {
             let (board, mut mentions) = match (opt_str(args, "to"), opt_str(args, "board")) {
                 (Some(to), _) => {
-                    let (name, agent) = parse_address(&to).ok_or_else(|| Error::new(Code::Invalid, format!("\"{to}\" is not a name or name/agent")))?;
+                    let (name, agent) = parse_address(&to).ok_or_else(|| {
+                        Error::new(
+                            Code::Invalid,
+                            format!("\"{to}\" is not a name or name/agent"),
+                        )
+                    })?;
                     if ctx.auth.identity(&name)?.is_none() {
-                        return err(Code::NotFound, format!("nobody called \"{name}\" is here; check `backchannel directory`"));
+                        return err(
+                            Code::NotFound,
+                            format!(
+                                "nobody called \"{name}\" is here; check `backchannel directory`"
+                            ),
+                        );
                     }
-                    (format!("@{name}"), if agent.is_some() { vec![to.trim_start_matches('@').to_string()] } else { vec![] })
+                    (
+                        format!("@{name}"),
+                        if agent.is_some() {
+                            vec![to.trim_start_matches('@').to_string()]
+                        } else {
+                            vec![]
+                        },
+                    )
                 }
                 (None, Some(b)) => (b, vec![]),
                 (None, None) => {
                     if let Some(r) = opt_str(args, "ref") {
                         (ctx.target(&r)?.envelope.board, vec![])
                     } else {
-                        return err(Code::Invalid, "say where: board (broadcast to a group) or to (a person or agent)");
+                        return err(
+                            Code::Invalid,
+                            "say where: board (broadcast to a group) or to (a person or agent)",
+                        );
                     }
                 }
             };
             mentions.extend(opt_list(args, "mentions").unwrap_or_default());
-            let kind = opt_str(args, "kind").map(|k| Kind::parse(&k).ok_or_else(|| Error::new(Code::Invalid, format!("unknown kind \"{k}\"")))).transpose()?;
+            let kind = opt_str(args, "kind")
+                .map(|k| {
+                    Kind::parse(&k)
+                        .ok_or_else(|| Error::new(Code::Invalid, format!("unknown kind \"{k}\"")))
+                })
+                .transpose()?;
             if kind.is_some_and(|k| k.is_action()) {
-                return err(Code::Invalid, "use `backchannel claim`, `release`, `handled` and `retract` for those");
+                return err(
+                    Code::Invalid,
+                    "use `backchannel claim`, `release`, `handled` and `retract` for those",
+                );
             }
             let p = ctx.publish(Draft {
                 board,
@@ -231,10 +354,20 @@ pub fn call<S: Sql>(ctx: &mut Ctx<'_, S>, name: &str, args: &Value) -> Result<Op
                 ttl_seconds: opt_int(args, "ttl_seconds"),
                 ..Default::default()
             })?;
-            Outcome::Text(format!("Posted {} to {} (id {}, seq {}).", p.envelope.kind.as_str(), p.envelope.board, p.envelope.id, p.seq))
+            Outcome::Text(format!(
+                "Posted {} to {} (id {}, seq {}).",
+                p.envelope.kind.as_str(),
+                p.envelope.board,
+                p.envelope.id,
+                p.seq
+            ))
         }
         "inbox" => {
-            let (items, remaining) = ctx.inbox.read(&ctx.address(), opt_int(args, "limit").unwrap_or(20), opt_bool(args, "peek"))?;
+            let (items, remaining) = ctx.inbox.read(
+                &ctx.address(),
+                opt_int(args, "limit").unwrap_or(20),
+                opt_bool(args, "peek"),
+            )?;
             Outcome::Text(render::deliveries(&ctx.address(), &items, remaining))
         }
         "wait" => {
@@ -242,32 +375,57 @@ pub fn call<S: Sql>(ctx: &mut Ctx<'_, S>, name: &str, args: &Value) -> Result<Op
                 let (items, remaining) = ctx.inbox.read(&ctx.address(), 20, false)?;
                 Outcome::Text(render::deliveries(&ctx.address(), &items, remaining))
             } else {
-                Outcome::Wait { timeout_ms: opt_int(args, "timeout_seconds").unwrap_or(30).clamp(1, 55) * 1000 }
+                Outcome::Wait {
+                    timeout_ms: opt_int(args, "timeout_seconds").unwrap_or(30).clamp(1, 55) * 1000,
+                }
             }
         }
         "read" => {
             let posts = if let Some(t) = opt_str(args, "thread") {
                 ctx.auth.thread(Some(&me), &t, false)?
             } else {
-                let board = opt_str(args, "board").ok_or_else(|| Error::new(Code::Invalid, "give a board or a thread id"))?;
+                let board = opt_str(args, "board")
+                    .ok_or_else(|| Error::new(Code::Invalid, "give a board or a thread id"))?;
                 ctx.auth.read_board(
                     Some(&me),
                     &board,
-                    ReadOpts { after: opt_int(args, "after"), before: opt_int(args, "before"), limit: opt_int(args, "limit"), include_expired: false },
+                    ReadOpts {
+                        after: opt_int(args, "after"),
+                        before: opt_int(args, "before"),
+                        limit: opt_int(args, "limit"),
+                        include_expired: false,
+                    },
                 )?
             };
-            let with: Vec<(StoredPost, Handling)> = posts.into_iter().map(|p| ctx.auth.handling(&p.envelope.id).map(|h| (p, h))).collect::<Result<_>>()?;
-            let title = opt_str(args, "thread").map(|t| format!("Thread {t}")).unwrap_or_else(|| format!("Latest in {}", opt_str(args, "board").unwrap_or_default()));
+            let with: Vec<(StoredPost, Handling)> = posts
+                .into_iter()
+                .map(|p| ctx.auth.handling(&p.envelope.id).map(|h| (p, h)))
+                .collect::<Result<_>>()?;
+            let title = opt_str(args, "thread")
+                .map(|t| format!("Thread {t}"))
+                .unwrap_or_else(|| {
+                    format!("Latest in {}", opt_str(args, "board").unwrap_or_default())
+                });
             Outcome::Text(render::posts(&title, &with))
         }
-        "open_items" => Outcome::Text(render::posts("Asks and tasks nobody has handled", &ctx.auth.open_items(Some(&me), opt_int(args, "limit").unwrap_or(20))?)),
+        "open_items" => Outcome::Text(render::posts(
+            "Asks and tasks nobody has handled",
+            &ctx.auth
+                .open_items(Some(&me), opt_int(args, "limit").unwrap_or(20))?,
+        )),
         "claim" => ctx.act(Kind::Claim, args)?,
         "release" => ctx.act(Kind::Release, args)?,
         "handled" => ctx.act(Kind::Handled, args)?,
         "retract" => {
             let id = req_str(args, "id")?;
             let target = ctx.target(&id)?;
-            ctx.publish(Draft { board: target.envelope.board, body: String::new(), kind: Some(Kind::Retract), ref_: Some(id.clone()), ..Default::default() })?;
+            ctx.publish(Draft {
+                board: target.envelope.board,
+                body: String::new(),
+                kind: Some(Kind::Retract),
+                ref_: Some(id.clone()),
+                ..Default::default()
+            })?;
             Outcome::Text(format!("Retracted {id}."))
         }
         _ => return Ok(None),
@@ -327,7 +485,11 @@ pub fn tool(name: &str, description: &str, properties: Value, required: &[&str])
 // ---- argument helpers ---------------------------------------------------------
 
 pub fn opt_str(a: &Value, k: &str) -> Option<String> {
-    a.get(k).and_then(|v| v.as_str()).map(str::trim).filter(|s| !s.is_empty()).map(str::to_string)
+    a.get(k)
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
 }
 
 pub fn req_str(a: &Value, k: &str) -> Result<String> {
@@ -335,17 +497,32 @@ pub fn req_str(a: &Value, k: &str) -> Result<String> {
 }
 
 pub fn opt_int(a: &Value, k: &str) -> Option<i64> {
-    a.get(k).and_then(|v| v.as_i64().or_else(|| v.as_f64().map(|f| f as i64)).or_else(|| v.as_str().and_then(|s| s.parse().ok())))
+    a.get(k).and_then(|v| {
+        v.as_i64()
+            .or_else(|| v.as_f64().map(|f| f as i64))
+            .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+    })
 }
 
 pub fn opt_bool(a: &Value, k: &str) -> bool {
-    a.get(k).and_then(|v| v.as_bool().or_else(|| v.as_str().map(|s| s == "true"))).unwrap_or(false)
+    a.get(k)
+        .and_then(|v| v.as_bool().or_else(|| v.as_str().map(|s| s == "true")))
+        .unwrap_or(false)
 }
 
 pub fn opt_list(a: &Value, k: &str) -> Option<Vec<String>> {
     match a.get(k)? {
-        Value::Array(xs) => Some(xs.iter().filter_map(|x| x.as_str().map(str::to_string)).collect()),
-        Value::String(s) => Some(s.split(',').map(|x| x.trim().to_string()).filter(|x| !x.is_empty()).collect()),
+        Value::Array(xs) => Some(
+            xs.iter()
+                .filter_map(|x| x.as_str().map(str::to_string))
+                .collect(),
+        ),
+        Value::String(s) => Some(
+            s.split(',')
+                .map(|x| x.trim().to_string())
+                .filter(|x| !x.is_empty())
+                .collect(),
+        ),
         _ => None,
     }
 }

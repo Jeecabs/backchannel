@@ -7,7 +7,10 @@
 
 /// Characters that end a line somewhere, even though only `\n` should.
 fn is_break(c: char) -> bool {
-    matches!(c, '\r' | '\u{0b}' | '\u{0c}' | '\u{85}' | '\u{2028}' | '\u{2029}')
+    matches!(
+        c,
+        '\r' | '\u{0b}' | '\u{0c}' | '\u{85}' | '\u{2028}' | '\u{2029}'
+    )
 }
 
 /// Characters that reorder the text around them when displayed.
@@ -67,12 +70,18 @@ mod tests {
 
     #[test]
     fn line_breaks_become_newlines() {
-        assert_eq!(clean("a\r\nb\rc\u{2028}d\u{85}e\u{0b}f"), "a\nb\nc\nd\ne\nf");
+        assert_eq!(
+            clean("a\r\nb\rc\u{2028}d\u{85}e\u{0b}f"),
+            "a\nb\nc\nd\ne\nf"
+        );
     }
 
     #[test]
     fn escapes_and_overrides_are_dropped() {
-        assert_eq!(clean("a\u{1b}[2Kb\u{7}c\u{0}d\u{202e}e\u{9b}f"), "a[2Kbcdef");
+        assert_eq!(
+            clean("a\u{1b}[2Kb\u{7}c\u{0}d\u{202e}e\u{9b}f"),
+            "a[2Kbcdef"
+        );
         assert!(is_clean(&clean("\u{1b}]0;title\u{7}\r\u{2029}")));
     }
 

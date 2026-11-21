@@ -22,6 +22,9 @@ pub use relay::Backchannel;
 #[event(fetch)]
 async fn fetch(req: Request, env: Env, _ctx: Context) -> Result<Response> {
     console_error_panic_hook::set_once();
-    let stub = env.durable_object("BACKCHANNEL")?.id_from_name("orgs-v1")?.get_stub()?;
+    let stub = env
+        .durable_object("BACKCHANNEL")?
+        .id_from_name("orgs-v1")?
+        .get_stub()?;
     stub.fetch_with_request(req).await
 }
