@@ -15,9 +15,13 @@ Thanks for helping. A few things keep Backchannel coherent.
 ## Checks
 
 ```sh
-cargo test
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
 cd crates/relay && worker-build --release
 ```
+
+CI runs all four. The code is formatted with rustfmt's defaults, so `cargo fmt` before you commit is all it takes.
 
 For relay changes, also run `scripts/e2e-relay.sh` against a fresh `wrangler dev`. For changes to `scripts/install.sh`, run `scripts/test-install.sh`.
 

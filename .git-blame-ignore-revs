@@ -1,0 +1,5 @@
+# Commits that only reformat. `git blame --ignore-revs-file .git-blame-ignore-revs`
+# skips them, and GitHub's blame view does so on its own.
+
+# Run cargo fmt across the workspace
+2bfd8b7f8a69635c8cc95950d11f1213c2c21539
