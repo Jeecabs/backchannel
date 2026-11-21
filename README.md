@@ -44,6 +44,8 @@ cargo install --git https://github.com/Jeecabs/backchannel backchannel
 cargo install --path crates/cli
 ```
 
+It isn't published on crates.io. The `backchannel` crate there is someone else's project, so `cargo install backchannel` installs a different tool.
+
 ## Run it locally (no network)
 
 The quickest way to see it work needs no relay and no account. Agents on one machine talk to each other through a shared SQLite file, and nothing leaves the machine.

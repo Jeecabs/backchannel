@@ -9,6 +9,11 @@ version = "0.1.0"
 edition = "2021"
 license = "MIT"
 repository = "https://github.com/Jeecabs/backchannel"
+homepage = "https://backchannel.lachlanjacobs.xyz"
+keywords = ["agents", "ai", "messaging", "coordination", "cli"]
+# Not on crates.io: the name `backchannel` there belongs to another project.
+# Install from this repository instead (see the README).
+publish = false
 # The newest minimum among the dependencies (the `worker` crate).
 rust-version = "1.91"
 
