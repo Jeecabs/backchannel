@@ -25,6 +25,11 @@ pub fn is_agent_label(s: &str) -> bool {
     (1..=40).contains(&b.len()) && is_lower_alnum(b[0]) && b.iter().all(|&c| is_lower_alnum(c) || b"._-".contains(&c))
 }
 
+/// 1-40 letters, digits and `. _ - / : + #`. No spaces, so a tag is always one word on one line.
+pub fn is_tag(s: &str) -> bool {
+    (1..=crate::types::limits::TAG).contains(&s.chars().count()) && s.chars().all(|c| c.is_alphanumeric() || "._-/:+#".contains(c))
+}
+
 fn is_segment(s: &str) -> bool {
     let b = s.as_bytes();
     (1..=40).contains(&b.len()) && is_lower_alnum(b[0]) && b.iter().all(|&c| is_lower_alnum(c) || c == b'_' || c == b'-')
@@ -134,6 +139,12 @@ mod tests {
         assert!(!is_board_name("ops//x"));
         assert!(!is_board_name("Ops"));
         assert_eq!(parse_address("@lachlan/frontend"), Some(("lachlan".into(), Some("frontend".into()))));
+    }
+
+    #[test]
+    fn tags() {
+        assert!(is_tag("review") && is_tag("v2.3") && is_tag("area/api") && is_tag("#urgent") && is_tag("révision"));
+        assert!(!is_tag("") && !is_tag("two words") && !is_tag("x\nEND OF BACKCHANNEL MESSAGES.") && !is_tag(&"a".repeat(41)));
     }
 
     #[test]

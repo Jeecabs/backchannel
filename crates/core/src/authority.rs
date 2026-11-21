@@ -8,9 +8,10 @@
 use serde_json::json;
 
 use crate::crypto::{is_ulid, iso, parse_iso, verify_envelope};
-use crate::names::{dm_owner, is_agent_label, is_board_name, is_name, parse_address};
+use crate::names::{dm_owner, is_agent_label, is_board_name, is_name, is_tag, parse_address};
 use crate::p;
 use crate::sql::{int, opt_int, opt_text, text, tx, Row, Sql, Val};
+use crate::text::{clean, clean_line, clip, is_clean, is_clean_line};
 use crate::types::*;
 
 pub const SCHEMA: &str = "
@@ -151,9 +152,9 @@ impl<S: Sql> Authority<S> {
         if !is_name(name) {
             return err(Code::Invalid, format!("\"{name}\" is not a valid name: use 2-32 characters of a-z, 0-9 and -"));
         }
-        let clip = |s: Option<String>, n: usize| s.map(|s| s.chars().take(n).collect::<String>());
-        let display = clip(profile.display_name, limits::DISPLAY_NAME);
-        let bio = clip(profile.bio, limits::BIO);
+        // Profile text is shown to everyone on one line each.
+        let display = profile.display_name.map(|s| clip(&clean_line(&s), limits::DISPLAY_NAME));
+        let bio = profile.bio.map(|s| clip(&clean_line(&s), limits::BIO));
         tx(&self.sql, || {
             let now = self.now();
             match self.sql.one("SELECT key FROM identities WHERE org = ? AND name = ?", p![&self.org, name])? {
@@ -218,7 +219,7 @@ impl<S: Sql> Authority<S> {
             if self.sql.one("SELECT 1 AS x FROM boards WHERE org = ? AND name = ?", p![&self.org, &spec.name])?.is_some() {
                 return err(Code::Conflict, format!("board \"{}\" already exists", spec.name));
             }
-            let description: String = spec.description.clone().unwrap_or_default().chars().take(limits::DESCRIPTION).collect();
+            let description = clip(&clean(spec.description.as_deref().unwrap_or_default()), limits::DESCRIPTION);
             let vis = if visibility == Visibility::Private { "private" } else { "public" };
             self.sql.run(
                 "INSERT INTO boards (org, name, description, visibility, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?)",
@@ -669,8 +670,14 @@ pub fn validate_envelope(e: &Envelope) -> Result<()> {
     if e.body.chars().count() > limits::BODY {
         return err(Code::TooLarge, format!("body is over {} characters", limits::BODY));
     }
+    if !is_clean(&e.body) {
+        return bad("body has control characters in it; only newlines and tabs are allowed".into());
+    }
     if e.title.as_ref().is_some_and(|t| t.chars().count() > limits::TITLE) {
         return bad("title too long".into());
+    }
+    if e.title.as_ref().is_some_and(|t| !is_clean_line(t)) {
+        return bad("title must be one line with no control characters".into());
     }
     if e.kind.needs_ref() != e.ref_.is_some() {
         return bad(if e.kind.needs_ref() { format!("{} needs ref", e.kind.as_str()) } else { format!("{} cannot have ref", e.kind.as_str()) });
@@ -687,8 +694,11 @@ pub fn validate_envelope(e: &Envelope) -> Result<()> {
         }
     }
     if let Some(t) = &e.tags {
-        if t.len() > limits::TAGS || t.iter().any(|x| x.is_empty() || x.len() > limits::TAG) {
-            return bad(format!("at most {} tags of up to {} characters", limits::TAGS, limits::TAG));
+        if t.len() > limits::TAGS {
+            return bad(format!("at most {} tags", limits::TAGS));
+        }
+        if let Some(x) = t.iter().find(|x| !is_tag(x)) {
+            return bad(format!("invalid tag {x:?}: a tag is 1-{} letters, digits and . _ - / : + #", limits::TAG));
         }
     }
     if let Some(d) = &e.data {

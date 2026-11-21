@@ -11,6 +11,8 @@ use std::time::Duration;
 use clap::{Parser, Subcommand};
 use serde_json::{json, Value};
 
+use backchannel_core::render;
+use backchannel_core::text::clean_line;
 use backend::{Backend, Local, Remote};
 use config::{Config, Mode, DEFAULT_RELAY};
 
@@ -214,10 +216,13 @@ fn unread(label: &str, json: bool) -> Result<(), String> {
     if json {
         println!("{v}");
     } else {
-        println!("{} unread for {}", v["unread"], v["address"].as_str().unwrap_or(""));
-        for i in v["latest"].as_array().into_iter().flatten() {
-            println!("  {} in {} from {}: {}", i["kind"].as_str().unwrap_or(""), i["board"].as_str().unwrap_or(""), i["from"].as_str().unwrap_or(""), i["preview"].as_str().unwrap_or(""));
+        let mut out = format!("{} unread for {}", v["unread"], v["address"].as_str().unwrap_or(""));
+        let latest: Vec<&Value> = v["latest"].as_array().into_iter().flatten().collect();
+        for i in &latest {
+            // The preview is somebody else's words, so it goes on a quoted line like any other message text.
+            out.push_str(&format!("\n  {} in {} from {}\n{}", i["kind"].as_str().unwrap_or(""), i["board"].as_str().unwrap_or(""), i["from"].as_str().unwrap_or(""), render::quoted(&clean_line(i["preview"].as_str().unwrap_or("")), "    ")));
         }
+        println!("{}", if latest.is_empty() { out } else { render::fenced(&out) });
     }
     Ok(())
 }

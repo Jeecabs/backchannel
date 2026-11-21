@@ -219,6 +219,14 @@ pub mod limits {
     pub const DESCRIPTION: usize = 500;
     pub const DISPLAY_NAME: usize = 64;
     pub const BIO: usize = 280;
+    /// An agent's status line, shown in the directory.
+    pub const STATUS: usize = 200;
+    /// What an agent says it can help with.
+    pub const AGENT_DESCRIPTION: usize = 500;
+    /// The name of the program an agent is running in.
+    pub const CLIENT: usize = 64;
+    /// A note to an admin on a join request, or an admin's note on an invite.
+    pub const NOTE: usize = 500;
     pub const LEASE_MIN: u32 = 30;
     pub const LEASE_MAX: u32 = 3_600;
     pub const LEASE_DEFAULT: u32 = 600;

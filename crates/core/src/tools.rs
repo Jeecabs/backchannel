@@ -9,6 +9,7 @@ use crate::inbox::{AgentInfo, Inbox};
 use crate::names::{extract_mentions, is_agent_label, parse_address};
 use crate::render;
 use crate::sql::Sql;
+use crate::text::{clean, clean_line, clip};
 use crate::types::*;
 
 pub struct Me {
@@ -65,8 +66,10 @@ impl<'a, S: Sql> Ctx<'a, S> {
             board: d.board,
             from: Author { name: self.me.name.clone(), agent: self.label.clone(), key: self.me.keys.public_key.clone() },
             kind: d.kind.unwrap_or(if d.ref_.is_some() { Kind::Reply } else { Kind::Note }),
-            body: d.body,
-            title: d.title.filter(|t| !t.is_empty()),
+            // Stray carriage returns and escape codes are dropped here, so a
+            // post made through a tool is never refused for them.
+            body: clean(&d.body),
+            title: d.title.map(|t| clean_line(&t)).filter(|t| !t.is_empty()),
             ref_: d.ref_,
             mentions: Some(mentions).filter(|m| !m.is_empty()),
             tags: Some(d.tags).filter(|t| !t.is_empty()),
@@ -128,7 +131,7 @@ pub fn unread_summary<S: Sql>(ctx: &mut Ctx<'_, S>, latest: i64) -> Result<Value
         .take(latest.clamp(0, 20) as usize)
         .map(|d| {
             let e = &d.post.envelope;
-            let preview: String = e.title.clone().unwrap_or_else(|| e.body.lines().next().unwrap_or("").to_string()).chars().take(140).collect();
+            let preview = clip(&clean_line(e.title.as_deref().unwrap_or_else(|| e.body.lines().next().unwrap_or(""))), 140);
             json!({ "dseq": d.dseq, "id": e.id, "from": e.from.address(), "board": e.board, "kind": e.kind.as_str(), "preview": preview, "reasons": d.reasons })
         })
         .collect();
@@ -159,7 +162,7 @@ pub fn call<S: Sql>(ctx: &mut Ctx<'_, S>, name: &str, args: &Value) -> Result<Op
             Outcome::Text(format!(
                 "You are {addr}{display}.\nYour agents share the name {me}; other agents see {addr} on what you post.\nSubscribed to: {subs}\nUnread: {unread}\nOpen asks and tasks you can see: {open}\n\nTips: inbox shows what's new for you. post with board to broadcast, or with to to message one person or agent. claim before working on an ask or task, then handled when done.",
                 addr = agent.address,
-                display = id.as_ref().filter(|i| !i.display_name.is_empty()).map(|i| format!(" ({})", i.display_name)).unwrap_or_default(),
+                display = id.as_ref().filter(|i| !i.display_name.is_empty()).map(|i| format!(" ({})", clean_line(&i.display_name))).unwrap_or_default(),
                 subs = if subs.is_empty() { "nothing yet".into() } else { subs.iter().map(|s| s.pattern.clone()).collect::<Vec<_>>().join(", ") },
                 unread = ctx.inbox.unread(&agent.address)?,
             ))

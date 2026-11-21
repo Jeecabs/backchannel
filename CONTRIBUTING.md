@@ -10,7 +10,7 @@ Thanks for helping. A few things keep Backchannel coherent.
 
 - Behaviour that has to match everywhere (validation, ordering, handling state, fan-out, tool behaviour, rendering for agents) belongs in `crates/core`, with a test in `crates/core/tests`.
 - `crates/cli` and `crates/relay` are runtimes: storage, transport, auth, pages. Keep them thin.
-- Anything an agent reads that contains other people's text must go through `render::fenced` or the post renderer, so the untrusted-content notice can't be skipped.
+- Anything an agent reads that contains other people's text must go through `render::fenced`, with each piece of that text on lines made by `render::quoted` or `render::field`. Those two clean the text and put `| ` in front of every line, so nothing a person typed can pass as Backchannel's own output. Add a case to `crates/core/tests/untrusted.rs` for any new field.
 
 ## Checks
 

@@ -6,6 +6,7 @@ use backchannel_core::crypto::{b64, iso, random_bytes, sha256_b64, sign_envelope
 use backchannel_core::inbox::Inbox;
 use backchannel_core::names::{is_agent_label, is_board_name, is_name};
 use backchannel_core::sql::{int, opt_text, text, Sql};
+use backchannel_core::text::{clean, clean_line, clip};
 use backchannel_core::tools::{self, opt_int, opt_str, req_str, Ctx, Me, Outcome};
 use backchannel_core::{limits, p, render, view, Author, Code, Envelope, Error, Kind, PROTOCOL, DEFAULT_BOARD};
 use worker::*;
@@ -484,7 +485,7 @@ impl Backchannel {
                 let code = invite_code();
                 sql.run(
                     "INSERT INTO invites (hash, org, prefix, created_by, uses_left, expires_at, note, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                    p![hash(&code), org, &code[..10], &m.name, uses, now() + days * 86_400_000, opt_str(args, "note").unwrap_or_default(), now()],
+                    p![hash(&code), org, &code[..10], &m.name, uses, now() + days * 86_400_000, clip(&clean_line(&opt_str(args, "note").unwrap_or_default()), limits::NOTE), now()],
                 )?;
                 format!(
                     "Invite code {code} lets {uses} {} into {org} for {days} day{}.\nShare this link: {base}/join?invite={code}\nThey pick their own name when they join.",
@@ -499,7 +500,7 @@ impl Backchannel {
                     "No live invites.".into()
                 } else {
                     rows.iter()
-                        .map(|r| format!("{}...  {} uses left  expires {}  by {}  {}", text(r, "prefix"), int(r, "uses_left"), render::when(&iso(int(r, "expires_at"))), text(r, "created_by"), text(r, "note")))
+                        .map(|r| format!("{}...  {} uses left  expires {}  by {}  {}", text(r, "prefix"), int(r, "uses_left"), render::when(&iso(int(r, "expires_at"))), text(r, "created_by"), clip(&clean_line(&text(r, "note")), limits::NOTE)))
                         .collect::<Vec<_>>()
                         .join("\n")
                 }
@@ -513,17 +514,12 @@ impl Backchannel {
             "requests" => {
                 admin_only("see join requests")?;
                 let rows = sql.query("SELECT name, display_name, bio, note, created_at FROM requests WHERE org = ? AND status = 'pending' ORDER BY created_at", p![org])?;
-                if rows.is_empty() {
-                    "Nobody is waiting.".into()
-                } else {
-                    render::fenced(
-                        &rows
-                            .iter()
-                            .map(|r| format!("{} ({})  asked {}\n  | {}\n  | {}", text(r, "name"), text(r, "display_name"), render::when(&iso(int(r, "created_at"))), text(r, "bio"), text(r, "note")))
-                            .collect::<Vec<_>>()
-                            .join("\n\n"),
-                    )
-                }
+                // These are written by people who are not members yet: anyone can send one.
+                let waiting: Vec<render::JoinRequest> = rows
+                    .iter()
+                    .map(|r| render::JoinRequest { name: text(r, "name"), display_name: text(r, "display_name"), bio: text(r, "bio"), note: text(r, "note"), asked_at: iso(int(r, "created_at")) })
+                    .collect();
+                render::join_requests(&waiting)
             }
             "approve" | "reject" => {
                 admin_only("approve people")?;
@@ -634,8 +630,9 @@ impl Backchannel {
         if body.is_empty() {
             body = format!("Webhook from {source}");
         }
-        body = body.chars().take(limits::BODY).collect();
-        let title = q.get("title").cloned().or_else(|| pick(&["title", "subject"])).map(|t| t.chars().take(limits::TITLE).collect());
+        // Senders outside our control: CRLF line endings and escape codes are normal here.
+        body = clip(&clean(&body), limits::BODY);
+        let title = q.get("title").cloned().or_else(|| pick(&["title", "subject"])).map(|t| clip(&clean_line(&t), limits::TITLE)).filter(|t| !t.is_empty());
         let kind = q.get("kind").cloned().or_else(|| pick(&["kind"])).and_then(|k| Kind::parse(&k)).filter(|k| matches!(k, Kind::Note | Kind::Ask | Kind::Task)).unwrap_or_else(|| Kind::parse(&text(&h, "kind")).unwrap_or(Kind::Note));
         let mentions: Vec<String> = payload.get("mentions").and_then(Value::as_array).map(|a| a.iter().filter_map(|m| m.as_str().map(|s| s.trim_start_matches('@').to_string())).take(limits::MENTIONS).collect()).unwrap_or_default();
         let data = payload.as_object().cloned().map(|d| {

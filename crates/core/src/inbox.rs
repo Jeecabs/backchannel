@@ -11,6 +11,7 @@ use crate::crypto::{iso, parse_iso};
 use crate::names::{dm_owner, is_agent_label, is_pattern, matches, parse_address};
 use crate::p;
 use crate::sql::{int, opt_text, text, tx, Sql};
+use crate::text::{clean_line, clip};
 use crate::types::*;
 
 /// How far back a new agent picks up direct messages and mentions.
@@ -121,6 +122,9 @@ impl<'a, S: Sql> Inbox<'a, S> {
         }
         let addr = format!("{name}/{label}");
         let now = self.auth.now();
+        // What an agent says about itself is shown to everyone in the directory.
+        let line = |s: Option<String>, n: usize| s.map(|s| clip(&clean_line(&s), n));
+        let info = AgentInfo { client: line(info.client, limits::CLIENT), status: line(info.status, limits::STATUS), description: line(info.description, limits::AGENT_DESCRIPTION) };
         tx(self.sql(), || {
             if self.sql().one("SELECT 1 AS x FROM agents WHERE org = ? AND address = ?", p![self.org(), &addr])?.is_none() {
                 self.sql().run(

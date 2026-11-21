@@ -14,6 +14,7 @@ pub mod render;
 pub mod sql;
 #[cfg(feature = "native")]
 pub mod sqlite;
+pub mod text;
 pub mod tools;
 pub mod types;
 pub mod view;
