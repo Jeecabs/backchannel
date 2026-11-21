@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Type-checks the Claude Code mod (mods/claude-code) against Claude Code's
-# plugin API, and validates the plugin and marketplace manifests when the
-# `claude` CLI is installed. Needs bun (for `bunx tsc`).
+# plugin API. When the `claude` CLI is installed it also validates the plugin
+# and marketplace manifests and runs the mod's tests. Needs bun (for `bunx tsc`).
 #
 # The API's declarations belong to Claude Code and are not kept in this
 # repository. Claude Code writes them beside a mod it loads from a folder you
@@ -39,6 +39,8 @@ echo "ok: $mod type-checks"
 if command -v claude >/dev/null 2>&1; then
   claude plugin validate . >/dev/null && echo "ok: claude plugin validate . (the marketplace)"
   claude plugin validate "$mod" >/dev/null && echo "ok: claude plugin validate $mod"
+  # The mod's own tests, run by Claude Code against the hooks as they ship.
+  claude plugin test "$mod"
 else
-  echo "skipped: claude plugin validate (no claude CLI here)"
+  echo "skipped: claude plugin validate and claude plugin test (no claude CLI here)"
 fi

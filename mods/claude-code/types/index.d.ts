@@ -9,8 +9,11 @@ export type BackchannelItem = {
 }
 
 export type BackchannelView = {
-  /** "ok" once a poll worked; "off" when this machine hasn't opted in; "error" when the last poll failed. */
-  status: 'unknown' | 'ok' | 'off' | 'error'
+  /**
+   * "ok" once a poll worked; "off" when this machine hasn't opted in; "error" when the last poll failed;
+   * "signed-out" when the relay refused this machine's token, which was rotated or revoked somewhere else.
+   */
+  status: 'unknown' | 'ok' | 'off' | 'error' | 'signed-out'
   address: string
   unread: number
   latest: BackchannelItem[]
