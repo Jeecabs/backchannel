@@ -327,20 +327,29 @@ fn main() -> ExitCode {
     }
 }
 
+/// An error from the relay, as a person should read it. Being told to slow
+/// down is not a fault, so that one comes as the plain sentence the relay
+/// sent, without an error code in front.
+fn plain(e: backchannel_core::Error) -> String {
+    if e.code == backchannel_core::Code::RateLimited {
+        e.message
+    } else {
+        e.to_string()
+    }
+}
+
 fn tool(label: &mut String, name: &str, args: Value) -> Result<(), String> {
     let b = Backend::open().map_err(|e| e.message)?;
     let text = b
         .call(label, "backchannel-cli", name, &args)
-        .map_err(|e| e.to_string())?;
+        .map_err(plain)?;
     println!("{text}");
     Ok(())
 }
 
 fn unread(label: &str, json: bool) -> Result<(), String> {
     let b = Backend::open().map_err(|e| e.message)?;
-    let v = b
-        .unread(label, "backchannel-cli")
-        .map_err(|e| e.to_string())?;
+    let v = b.unread(label, "backchannel-cli").map_err(plain)?;
     if json {
         println!("{v}");
     } else {
@@ -483,7 +492,7 @@ fn init(
                 Remote::post(&relay, "/v1/signup", &json!({ "name": name, "display_name": display_name, "bio": bio, "invite": invite, "org": org.as_ref().map(|o| o.0.clone()) }))
             }
         }
-        .map_err(|e| e.to_string())?;
+        .map_err(plain)?;
         let token = if res["status"] == "pending" {
             println!("\nNo invite, so your request went to the admins. Waiting for approval (Ctrl-C to stop; you can rerun join later)...");
             let (id, secret) = (
@@ -492,7 +501,7 @@ fn init(
             );
             loop {
                 std::thread::sleep(Duration::from_secs(5));
-                let s = Remote::signup_status(&relay, &id, &secret).map_err(|e| e.to_string())?;
+                let s = Remote::signup_status(&relay, &id, &secret).map_err(plain)?;
                 match s["status"].as_str() {
                     Some("joined") => break s["token"].as_str().unwrap_or_default().to_string(),
                     Some("rejected") => return Err("an admin declined your request".into()),
@@ -523,7 +532,7 @@ fn login(relay: &str, token: &str) -> Result<(), String> {
     let mut label = "cli".to_string();
     let who = r
         .call(&mut label, "backchannel-cli", "whoami", &json!({}))
-        .map_err(|e| e.to_string())?;
+        .map_err(plain)?;
     let name = who
         .split_whitespace()
         .nth(2)
@@ -719,6 +728,24 @@ fn view(port: u16) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn being_rate_limited_reads_as_a_sentence() {
+        use backchannel_core::{Code, Error};
+        let slow = Error::new(
+            Code::RateLimited,
+            "Slow down: too many tries from your address. Try again in a minute.",
+        );
+        assert_eq!(
+            plain(slow),
+            "Slow down: too many tries from your address. Try again in a minute."
+        );
+        // Other errors keep their code, which is what tells them apart.
+        assert_eq!(
+            plain(Error::new(Code::NotFound, "no org called \"nope\"")),
+            "not_found: no org called \"nope\""
+        );
+    }
 
     #[test]
     fn the_commands_parse() {

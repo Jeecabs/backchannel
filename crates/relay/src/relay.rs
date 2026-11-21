@@ -15,6 +15,7 @@ use backchannel_core::{
 use serde_json::{json, Value};
 use worker::*;
 
+use crate::ratelimit;
 use crate::store::DoSql;
 
 type R<T> = backchannel_core::Result<T>;
@@ -132,12 +133,12 @@ struct Member {
 #[durable_object]
 pub struct Backchannel {
     state: State,
-    _env: Env,
+    env: Env,
 }
 
 impl DurableObject for Backchannel {
     fn new(state: State, env: Env) -> Self {
-        let s = Backchannel { state, _env: env };
+        let s = Backchannel { state, env };
         let auth = Authority::new(s.sql(), Mode::Authority, now).expect("schema");
         Inbox::new(&auth, true, vec![]).expect("schema");
         auth.sql.batch(SCHEMA).expect("schema");
@@ -159,8 +160,17 @@ fn json_resp(v: &Value, status: u16) -> Result<Response> {
     Ok(r)
 }
 
-fn json_error(e: &Error) -> Result<Response> {
-    json_resp(&e.to_json(), e.code.http_status())
+/// Seconds a caller is told to wait, when an error says so.
+pub(crate) fn retry_after(e: &Error) -> Option<u64> {
+    e.detail.as_ref()?.get("retry_after")?.as_u64()
+}
+
+pub(crate) fn json_error(e: &Error) -> Result<Response> {
+    let mut r = json_resp(&e.to_json(), e.code.http_status())?;
+    if let Some(seconds) = retry_after(e) {
+        r.headers_mut().set("retry-after", &seconds.to_string())?;
+    }
+    Ok(r)
 }
 
 fn html(body: &str) -> Result<Response> {
@@ -275,15 +285,25 @@ impl Backchannel {
                 Ok(v) => json_resp(&v, 200)?,
                 Err(e) => json_error(&e)?,
             }),
-            (Method::Post, ["v1", "signup"]) => cors(
-                match body_json(&mut req, MAX_SIGNUP_BODY)
-                    .await
-                    .and_then(|body| self.signup(&body, &base))
+            (Method::Post, ["v1", "signup"]) => {
+                let body = match body_json(&mut req, MAX_SIGNUP_BODY).await {
+                    Ok(b) => b,
+                    Err(e) => return cors(json_error(&e)?),
+                };
+                // A signup that carries an invite code tests that code, so it also
+                // draws from the budget for invite lookups. Otherwise this would be
+                // a second, unlimited way to guess codes.
+                if opt_str(&body, "invite").is_some()
+                    && !ratelimit::allowed(&self.env, &ratelimit::INVITES, &ratelimit::key_of(&req))
+                        .await
                 {
+                    return ratelimit::too_many(&ratelimit::INVITES);
+                }
+                cors(match self.signup(&body, &base) {
                     Ok(v) => json_resp(&v, 200)?,
                     Err(e) => json_error(&e)?,
-                },
-            ),
+                })
+            }
             (Method::Get, ["v1", "signup", "status"]) => {
                 let q: std::collections::HashMap<String, String> =
                     url.query_pairs().into_owned().collect();
@@ -1135,7 +1155,7 @@ impl Backchannel {
     }
 }
 
-fn cors(mut r: Response) -> Result<Response> {
+pub(crate) fn cors(mut r: Response) -> Result<Response> {
     let h = r.headers_mut();
     h.set("access-control-allow-origin", "*")?;
     h.set(

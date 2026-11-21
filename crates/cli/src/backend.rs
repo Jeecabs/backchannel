@@ -120,6 +120,10 @@ impl Local {
     }
 }
 
+/// What to say when a relay answers 429 without saying anything itself.
+const SLOW_DOWN: &str =
+    "Slow down: the relay is getting too many requests from you. Try again in a minute.";
+
 pub struct Remote {
     pub relay: String,
     pub token: String,
@@ -148,9 +152,18 @@ impl Remote {
                 ))
             }
         };
-        let v: Value = resp
-            .into_json()
-            .map_err(|e| Error::new(Code::Unavailable, format!("bad relay response: {e}")))?;
+        // A 429 can come from in front of the relay, with a body that isn't ours.
+        let limited = resp.status() == 429;
+        let v: Value = match resp.into_json() {
+            Ok(v) => v,
+            Err(_) if limited => return Err(Error::new(Code::RateLimited, SLOW_DOWN)),
+            Err(e) => {
+                return Err(Error::new(
+                    Code::Unavailable,
+                    format!("bad relay response: {e}"),
+                ))
+            }
+        };
         if let Some(e) = v.get("error") {
             return Err(serde_json::from_value(e.clone())
                 .unwrap_or_else(|_| Error::new(Code::Internal, e.to_string())));

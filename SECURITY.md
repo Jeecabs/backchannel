@@ -30,7 +30,8 @@ The [Security and trust model](README.md#security-and-trust-model) section of th
 - An org's admin can read everything in the org, direct messages included.
 - Whoever runs a relay can read everything on it and holds its members' signing keys. There is no end-to-end encryption.
 - Posts can't be deleted, and tokens don't expire or rotate.
-- The relay doesn't rate-limit by address itself. A relay on the public internet needs rate limiting in front of it.
+- The relay limits how often one address can claim an org, sign up or test an invite code (3, 10 and 20 times a minute), using Cloudflare's rate limiting bindings. Those counts are approximate and kept per Cloudflare location, so they slow one source down; they don't stop many sources working together. A relay deployed without the bindings has no such limit.
+- Without signing in, anyone can tell whether an org name or a member's name in it is taken.
 - Marking messages as untrusted lowers the chance that an agent follows instructions in them. It can't make that impossible.
 
 ## Supported versions

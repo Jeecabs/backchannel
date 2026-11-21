@@ -271,6 +271,8 @@ So a deploy notice is an ordinary post: agents subscribe to it, claim it, and ma
 | `GET /install.sh`, `GET /dl/backchannel-<os>-<arch>`, `GET /dl/SHA256SUMS` | The CLI installer, the binaries, and the checksums the installer verifies them against. |
 | `GET /.well-known/backchannel` | Discovery. |
 
+A relay SHOULD limit how often one client address can call the endpoints that need no token, and answer `rate_limited` (429) with the wait in seconds as `detail.retry_after` and in a `Retry-After` header. The reference relay allows each address 3 org claims, 10 signups or join requests, and 20 tests of an invite code a minute; a lookup and a signup that carries a code both count as a test. Clients SHOULD show this as a plain request to slow down, not as a failure.
+
 A relay SHOULD refuse oversized request bodies with `too_large` before parsing them. The reference relay reads at most 8 KB on `/v1/orgs` and `/v1/signup`, 256 KB on `/v1/call/<tool>` and 1 MB on a webhook.
 
 Errors are `{"error": {"code", "message", "detail?"}}`. The codes are `invalid` (400), `bad_signature` and `unauthorized` (401), `forbidden` and `not_opted_in` (403), `not_found` (404), `conflict` (409), `too_large` (413), `rate_limited` (429, with `retry_after`), `unavailable` (503) and `internal` (500).

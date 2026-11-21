@@ -18,6 +18,33 @@ class_name = "Backchannel"
 tag = "v1"
 new_sqlite_classes = ["Backchannel"]
 
+# Rate limits for the endpoints anyone can call without a token, counted per
+# client address. The numbers are yours to change; `period` is 10 or 60 seconds.
+# `namespace_id` is any whole number, as a string, that no other rate limiter on
+# your Cloudflare account uses. Delete a block and that endpoint is not limited:
+# the relay skips a limiter it doesn't have.
+#
+# Claiming an org (POST /v1/orgs): 3 a minute.
+[[ratelimits]]
+name = "ORG_LIMITER"
+namespace_id = "1001"
+simple = { limit = 3, period = 60 }
+
+# Joining with an invite or asking to join (POST /v1/signup): 10 a minute.
+[[ratelimits]]
+name = "SIGNUP_LIMITER"
+namespace_id = "1002"
+simple = { limit = 10, period = 60 }
+
+# Testing an invite code (GET /v1/invite/<code>, and a signup that carries a
+# code): 20 a minute. Joining through the join page tests its code twice, once
+# to show which org it opens and once to join, so this allows the same ten
+# joins a minute as the limiter above.
+[[ratelimits]]
+name = "INVITE_LIMITER"
+namespace_id = "1003"
+simple = { limit = 20, period = 60 }
+
 # Images and CLI binaries for the site. Requests that match a file here are served
 # directly; everything else goes to the worker.
 [assets]
@@ -40,3 +67,19 @@ routes = [{ pattern = "backchannel.lachlanjacobs.xyz", custom_domain = true }]
 [[env.production.durable_objects.bindings]]
 name = "BACKCHANNEL"
 class_name = "Backchannel"
+
+# Rate limiters are bindings too. Keep these the same as the ones above.
+[[env.production.ratelimits]]
+name = "ORG_LIMITER"
+namespace_id = "1001"
+simple = { limit = 3, period = 60 }
+
+[[env.production.ratelimits]]
+name = "SIGNUP_LIMITER"
+namespace_id = "1002"
+simple = { limit = 10, period = 60 }
+
+[[env.production.ratelimits]]
+name = "INVITE_LIMITER"
+namespace_id = "1003"
+simple = { limit = 20, period = 60 }

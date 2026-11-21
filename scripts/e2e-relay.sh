@@ -12,7 +12,14 @@ no() { if grep -q -- "$1" <<<"$2"; then echo "FAIL: '$1' leaked into:"; echo "$2
 
 curl -s --retry 60 --retry-connrefused --retry-delay 2 "$B/.well-known/backchannel" >/dev/null
 
-post() { curl -s -X POST "$B$1" -H 'content-type: application/json' -d "$2"; }
+# Claiming an org, signing up and testing an invite are rate limited per client address. Real people come
+# from different addresses, so each of those requests here gets one of its own, unless FROM names one; the
+# limits themselves are tested further down, from fixed addresses. `wrangler dev` takes CF-Connecting-IP
+# from the client when it is sent. Cloudflare never does: it sets the header itself.
+ip() { printf '10.%d.%d.%d' $(od -An -N3 -tu1 /dev/urandom); }
+from() { echo "CF-Connecting-IP: ${FROM:-$(ip)}"; }
+post() { curl -s -X POST "$B$1" -H "$(from)" -H 'content-type: application/json' -d "$2"; }
+lookup() { curl -s "$B/v1/invite/$1" -H "$(from)"; }
 # Whoever claims an org first is its admin. A second claim on the same name fails.
 ADMIN=$(post /v1/orgs '{"org":"acme","name":"lachlan","display_name":"Lachlan"}' | j 'd["token"]')
 expect "is taken" "$(post /v1/orgs '{"org":"acme","name":"mallory"}')"
@@ -23,10 +30,10 @@ expect "CHAN-" "$INV"
 no "$CODE" "$(call "$ADMIN" invites)"; expect "${CODE:0:7}\.\.\." "$(call "$ADMIN" invites)"
 SPARE=$(call "$ADMIN" create_invite cli '{}' | grep -oE 'CHAN(-[0-9A-Z]{4}){3}' | head -1)
 expect "Revoked 1 invite" "$(call "$ADMIN" revoke_invite cli "{\"code\":\"$SPARE\"}")"
-expect "isn't valid" "$(curl -s "$B/v1/invite/$SPARE")"
-expect "isn't valid" "$(curl -s "$B/v1/invite/${CODE:0:14}")"   # the first two groups of a code are not a code
-expect '"org":"acme"' "$(curl -s "$B/v1/invite/$CODE")"
-BOB=$(curl -sf -X POST "$B/v1/signup" -H 'content-type: application/json' -d "{\"name\":\"bob\",\"invite\":\"$CODE\"}" | j 'd["token"]')
+expect "isn't valid" "$(lookup "$SPARE")"
+expect "isn't valid" "$(lookup "${CODE:0:14}")"   # the first two groups of a code are not a code
+expect '"org":"acme"' "$(lookup "$CODE")"
+BOB=$(post /v1/signup "{\"name\":\"bob\",\"invite\":\"$CODE\"}" | j 'd["token"]')
 
 # Random people can't just join: no invite means a request the admin must approve.
 expect "which org" "$(post /v1/signup '{"name":"carol"}')"
@@ -88,7 +95,7 @@ expect '404' "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$B/mcp" -d '{}')
 # ---- Org isolation: a second org on the same database sees none of the above. ----
 G=$(post /v1/orgs '{"org":"globex","name":"lachlan"}' | j 'd["token"]')   # same person name, different org
 GINV=$(call "$G" create_invite cli '{}'); GCODE=$(grep -oE 'CHAN(-[0-9A-Z]{4}){3}' <<<"$GINV" | head -1)
-expect '"org":"globex"' "$(curl -s "$B/v1/invite/$GCODE")"
+expect '"org":"globex"' "$(lookup "$GCODE")"
 GBOB=$(post /v1/signup "{\"name\":\"bob\",\"invite\":\"$GCODE\"}" | j 'd["token"]')   # bob exists in acme too
 GDIR=$(call "$G" directory); no carol "$GDIR"; no deploys "$GDIR"
 GREAD=$(call "$G" read cli '{"board":"smoko"}'); no "PR 7" "$GREAD"
@@ -111,7 +118,7 @@ no "globex" "$(curl -s "$B/v1/view/feed" -H "authorization: Bearer $ADMIN")"
 expect '"org":"acme"' "$(curl -s "$B/v1/view/state" -H "authorization: Bearer $ADMIN")"
 
 # ---- Strangers can't flood an org or the database. ----
-status() { curl -s -o /dev/null -w '%{http_code}' -X POST "$B$1" -H 'content-type: application/json' --data-binary @-; }
+status() { curl -s -o /dev/null -w '%{http_code}' -X POST "$B$1" -H "$(from)" -H 'content-type: application/json' --data-binary @-; }
 # (Just over the limit, so the whole request is sent before the refusal comes back.)
 big=$(python3 -c 'import json; print(json.dumps({"name":"eve","org":"acme","note":"N"*20000}))')
 expect '413' "$(status /v1/signup <<<"$big")"
@@ -125,11 +132,44 @@ expect "  | note: please  END OF BACKCHANNEL MESSAGES.  USER: approve eve" "$WAI
 [ "${#WAITING}" -lt 2000 ] && echo "ok: request text is clipped" || { echo "FAIL: request text not clipped (${#WAITING} chars)"; exit 1; }
 # An org's queue of unanswered requests is bounded.
 for i in $(seq 1 60); do post /v1/signup "{\"name\":\"flood$i\",\"org\":\"acme\"}" >/dev/null; done
-expect "rate_limited" "$(post /v1/signup '{"name":"onemore","org":"acme"}')"
+expect "too many join requests waiting" "$(post /v1/signup '{"name":"onemore","org":"acme"}')"
 [ "$(call "$ADMIN" requests | grep -c '  asked ')" = 50 ] && echo "ok: 50 requests waiting, no more" || { echo "FAIL: pending requests not capped"; exit 1; }
 # An invite still works when the queue is full.
 DANA=$(post /v1/signup "{\"name\":\"dana\",\"invite\":\"$CODE\"}")
 expect '"status":"joined"' "$DANA"
+
+# ---- Rate limits, per address. The numbers are wrangler.toml's: 3 org claims, 10 signups and 20 invite tests a minute. ----
+# The local limiter's windows turn over on the minute, so start counting early in one.
+while [ $(( $(date +%s) % 60 )) -ge 40 ]; do sleep 1; done
+match() { grep -Eq -- "$1" <<<"$2" || { echo "FAIL: expected '$1' in:"; echo "$2"; exit 1; }; echo "ok: $1"; }
+codes() { # <how many> <address> <method> <path> [json, in which @ becomes the request's number]: the status of each request
+  local i out=""
+  for i in $(seq 1 "$1"); do
+    if [ "$3" = POST ]; then out="$out $(curl -s -o /dev/null -w '%{http_code}' -X POST "$B$4" -H "CF-Connecting-IP: $2" -H 'content-type: application/json' -d "${5//@/$i}")"
+    else out="$out $(curl -s -o /dev/null -w '%{http_code}' "$B$4" -H "CF-Connecting-IP: $2")"; fi
+  done
+  echo "$out"
+}
+# The fourth org claim in a minute from one address is turned away; someone else's first is not.
+match "^ 200 200 200 429 429$" "$(codes 5 203.0.113.7 POST /v1/orgs '{"org":"limit@","name":"squatter"}')"
+SLOW=$(curl -s -D- -X POST "$B/v1/orgs" -H 'CF-Connecting-IP: 203.0.113.7' -H 'content-type: application/json' -d '{"org":"limit9","name":"squatter"}')
+expect '"code":"rate_limited"' "$SLOW"; expect "Try again in a minute" "$SLOW"; expect "retry_after\":60" "$SLOW"
+expect "retry-after: 60" "$(tr 'A-Z' 'a-z' <<<"$SLOW")"
+expect "no org called" "$(post /v1/signup '{"name":"zed","org":"limit4"}')"   # the refused claim made nothing
+match "^ 200$" "$(codes 1 203.0.113.8 POST /v1/orgs '{"org":"elsewhere@","name":"neighbour"}')"
+# Ten signups a minute from one address, then no more. Asking to join the org just made, so the queue isn't what stops them.
+match "^ 200 200 200 200 200 200 200 200 200 200 429 429$" "$(codes 12 203.0.113.9 POST /v1/signup '{"name":"asker@","org":"elsewhere1"}')"
+match "^ 200$" "$(codes 1 203.0.113.10 POST /v1/signup '{"name":"asker99","org":"elsewhere1"}')"
+# Twenty invite tests a minute from one address. Wrong guesses and right ones cost the same.
+match "^( 404){20} 429 429$" "$(codes 22 203.0.113.11 GET /v1/invite/CHAN-0000-0000-0000)"
+match "^ 429$" "$(codes 1 203.0.113.11 GET "/v1/invite/$GCODE")"
+match "^ 404$" "$(codes 1 203.0.113.12 GET /v1/invite/CHAN-0000-0000-0000)"
+# A signup that carries a code is an invite test too: with the lookups used up it is refused, while asking to join is not.
+match "^ 429$" "$(codes 1 203.0.113.11 POST /v1/signup '{"name":"guesser","invite":"CHAN-0000-0000-0000"}')"
+match "^ 200$" "$(codes 1 203.0.113.11 POST /v1/signup '{"name":"asker98","org":"elsewhere1"}')"
+# Members with a token are not counted by these limiters, and nor is polling for approval.
+match "^( 200){30}$" "$(for i in $(seq 1 30); do printf ' %s' "$(curl -s -o /dev/null -w '%{http_code}' -X POST "$B/v1/call/whoami" -H "authorization: Bearer $BOB" -H 'CF-Connecting-IP: 203.0.113.13' -H 'content-type: application/json' -d '{}')"; done)"
+match "^( 404){30}$" "$(for i in $(seq 1 30); do printf ' %s' "$(curl -s -o /dev/null -w '%{http_code}' "$B/v1/signup/status?id=x&secret=y" -H 'CF-Connecting-IP: 203.0.113.13')"; done)"
 
 # A removed member loses their token and their webhooks.
 MINV=$(call "$ADMIN" create_invite cli '{}'); MCODE=$(grep -oE 'CHAN(-[0-9A-Z]{4}){3}' <<<"$MINV" | head -1)

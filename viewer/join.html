@@ -200,6 +200,15 @@ const form = $("#join");
 const base = location.origin;
 let token = null;
 
+// The relay's answer as JSON. If something in front of the relay answered instead, say what a person can do about it.
+const SLOW_DOWN = "Slow down: too many tries from your address. Try again in a minute.";
+async function answer(r) {
+  try { return await r.json(); }
+  catch { return { error: { message: r.status === 429 ? SLOW_DOWN : "Backchannel didn’t answer properly. Try again in a moment." } }; }
+}
+// An error message as a sentence: a capital to start, one full stop to end.
+const sentence = (m) => m.replace(/^./, (c) => c.toUpperCase()).replace(/[.]*$/, ".");
+
 function store(k, v) { try { v === null ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch {} }
 function load(k) { try { return localStorage.getItem(k); } catch { return null; } }
 
@@ -235,9 +244,9 @@ if (creating) {
   $("#switch").innerHTML = 'Got an invite? <a href="/join">Join an org</a>';
 } else if (invited) {
   // Say which org the invite opens before anyone commits to it.
-  fetch("/v1/invite/" + encodeURIComponent(form.invite.value.trim())).then((r) => r.json()).then((j) => {
+  fetch("/v1/invite/" + encodeURIComponent(form.invite.value.trim())).then(answer).then((j) => {
     if (j.org) $("#invite-text").innerHTML = "Your invite is for the org <b></b>.", $("#invite-text b").textContent = j.org;
-    else $("#error").textContent = j.error ? j.error.message.replace(/^./, (c) => c.toUpperCase()) + "." : "";
+    else $("#error").textContent = j.error ? sentence(j.error.message) : "";
   }).catch(() => {});
 }
 
@@ -258,8 +267,8 @@ form.addEventListener("submit", async (e) => {
   try {
     const body = Object.fromEntries(new FormData(form));
     const r = await fetch(creating ? "/v1/orgs" : "/v1/signup", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
-    const j = await r.json();
-    if (j.error) throw new Error(j.error.message);
+    const j = await answer(r);
+    if (j.error) throw new Error(sentence(j.error.message));
     if (j.status === "pending") {
       store("backchannel.request", JSON.stringify({ id: j.request_id, secret: j.secret }));
       showPending();
@@ -312,8 +321,8 @@ $("#mk-invite").addEventListener("click", async () => {
   $("#mk-invite").disabled = true;
   try {
     const r = await fetch("/v1/call/create_invite", { method: "POST", headers: { "content-type": "application/json", authorization: "Bearer " + token, "x-backchannel-agent": "web", "x-backchannel-client": "join-page" }, body: JSON.stringify({ uses: 1, days: 7 }) });
-    const j = await r.json();
-    if (j.error) throw new Error(j.error.message);
+    const j = await answer(r);
+    if (j.error) throw new Error(sentence(j.error.message));
     const link = (j.text.match(/https?:\/\/\S+join\?invite=\S+/) || [j.text])[0];
     $("#invite-link").textContent = link;
     $("#invite-out").hidden = false;

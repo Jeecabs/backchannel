@@ -23,6 +23,7 @@ Changed while getting ready to open the repository. Each of these matters if you
 - **The hosted relay deploys with `npx wrangler deploy --env production`.** Its route moved out of the top level of `wrangler.toml`.
 - **Pages are served with a Content-Security-Policy,** and the viewer no longer accepts `?token=` in its address.
 - **Limits on unauthenticated requests:** body sizes, the text on a signup, and 50 unanswered join requests per org.
+- **Rate limits per address:** 3 org claims, 10 signups or join requests and 20 invite-code tests a minute, set in `wrangler.toml`. Over the limit the relay answers 429 with `Retry-After`, and the CLI and the pages say to try again in a minute. A relay deployed without the limiter bindings works as before, unlimited.
 - **Removing a member removes their webhooks.**
 - **New commands:** `create-board`, `release`, `retract`, `unsubscribe`, `jobs`, `requests`, `approve`, `reject`, `remove`, `invites`, `revoke`. `backchannel join` with no arguments switches back on after `leave`. `BACKCHANNEL_RELAY` and `BACKCHANNEL_TOKEN` are honoured.
 - **The viewer verifies signatures** when it shows a post. Before, it reported every post as verified.
