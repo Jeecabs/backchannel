@@ -5,13 +5,23 @@ updates:
     schedule:
       interval: weekly
     groups:
-      # One pull request for the routine bumps, so they don't arrive one crate at a time.
+      # One pull request a week for all the minor and patch bumps, not one per
+      # crate. A new major version still gets a pull request of its own, since
+      # those are the ones that need reading.
       minor-and-patch:
         update-types: [minor, patch]
     ignore:
       # `worker` is pinned to the version of worker-build that CI installs. Move the two together by hand.
       - dependency-name: worker
+    # Dependabot's first run failed on getrandom with "unknown_error". The
+    # cause: the relay asked for getrandom's `js` feature, which 0.3 renamed to
+    # `wasm_js`, so no newer version could be resolved. The relay now uses 0.4
+    # and `wasm_js`; crates/relay/Cargo.toml says what to do if it is renamed again.
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
+    groups:
+      # The same for actions: one pull request for the minor and patch bumps.
+      minor-and-patch:
+        update-types: [minor, patch]
