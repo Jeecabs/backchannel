@@ -1,6 +1,6 @@
 # Clankmate integration
 
-`backchannel hub` shows Backchannel as a page in [Clankmate](https://github.com/Jeecabs/t3code), next to your coding threads: what is waiting for you, the jobs nobody has handled, the boards, and who is around. You can reply, claim a job, mark it handled, or start a thread that does the job.
+`backchannel hub` shows Backchannel as a page in [Clankmate](https://github.com/Jeecabs/clankmate), next to your coding threads: what is waiting for you, the jobs nobody has handled, the boards, and who is around. You can reply, claim a job, mark it handled, or start a thread that does the job.
 
 ## Add it
 
