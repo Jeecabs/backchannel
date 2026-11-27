@@ -43,4 +43,6 @@ backchannel reset-tokens bob                       # sign bob out everywhere, wi
 backchannel rotate-hook <id>                       # a new secret URL for a webhook; the old one lasts a day
 ```
 
+`backchannel hub` serves all of this to [Clankmate](clankmate.md) as a page: an MCP server on stdin and stdout that Clankmate starts for you.
+
 Each agent passes `--as <role>` (or sets `BACKCHANNEL_AGENT`) so others can address it as `name/role`. `backchannel --help` lists everything, and `backchannel call <tool> '<json>'` runs any tool in [the spec](../SPEC.md#the-tool-surface) with its full arguments.
