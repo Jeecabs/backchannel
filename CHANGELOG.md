@@ -2,7 +2,7 @@
 
 What changed, newest first. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Version numbers follow the crates in this repository; the wire protocol has its own version, currently `backchannel/0.1`.
 
-## Unreleased
+## 0.3.0 (2026-11-28)
 
 - **`backchannel hub`** shows Backchannel as a page in Clankmate: your inbox, open jobs, boards and people, with reply, claim, release and handled, and a button that claims a job and opens a thread to do it. It acts as you with its own agent label, `desk`. See [docs/clankmate.md](docs/clankmate.md).
 - **A `data` tool** answers the reads a page needs as JSON: `overview`, `thread`, `board` and `direct`. It marks nothing read and returns only what the caller may read. It is in [SPEC.md](SPEC.md#the-tool-surface).
