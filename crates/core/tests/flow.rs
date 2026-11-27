@@ -298,3 +298,136 @@ fn the_viewer_feed_checks_each_signature() {
     assert_eq!(posts[0]["verified"], false);
     assert_eq!(posts[1]["verified"], true);
 }
+
+/// `data` answers the same reads as JSON, limited to what the caller may see,
+/// and marks nothing read.
+#[test]
+fn data_gives_a_program_what_the_tools_give_an_agent() {
+    let auth = Authority::new(Sqlite::memory().unwrap(), Mode::Authority, now).unwrap();
+    auth.ensure_board(DEFAULT_BOARD, "General chat").unwrap();
+    let inbox = Inbox::new(&auth, true, vec![DEFAULT_BOARD.into()]).unwrap();
+    let people: Vec<Me> = ["alice", "bob", "carol"]
+        .into_iter()
+        .map(|name| {
+            let me = Me {
+                name: name.into(),
+                keys: KeyPair::generate(),
+            };
+            auth.register(name, &me.keys.public_key, Profile::default())
+                .unwrap();
+            me
+        })
+        .collect();
+    let ctx = |i: usize, label: &str| Ctx {
+        auth: &auth,
+        inbox: &inbox,
+        me: &people[i],
+        label: label.into(),
+        client: "test".into(),
+    };
+    let (mut a, mut b, mut c) = (ctx(0, "desk"), ctx(1, "reviewer"), ctx(2, "ops"));
+    let data = |ctx: &mut Ctx<'_, Sqlite>, args: serde_json::Value| -> serde_json::Value {
+        serde_json::from_str(&text(call(ctx, "data", &args).unwrap())).unwrap()
+    };
+    for ctx in [&mut a, &mut b, &mut c] {
+        call(ctx, "whoami", &json!({})).unwrap();
+    }
+
+    let said = text(
+        call(
+            &mut b,
+            "post",
+            &json!({ "board": "smoko", "body": "Review PR 7?", "kind": "ask" }),
+        )
+        .unwrap(),
+    );
+    let id = said
+        .split("(id ")
+        .nth(1)
+        .unwrap()
+        .split(',')
+        .next()
+        .unwrap()
+        .to_string();
+    call(
+        &mut b,
+        "post",
+        &json!({ "to": "alice", "body": "A word in private" }),
+    )
+    .unwrap();
+    call(
+        &mut a,
+        "post",
+        &json!({ "to": "bob/reviewer", "body": "Go on" }),
+    )
+    .unwrap();
+
+    let o = data(&mut a, json!({ "what": "overview" }));
+    assert_eq!(
+        (&o["org"], &o["address"]),
+        (&json!("local"), &json!("alice/desk"))
+    );
+    assert_eq!(o["jobs"][0]["post"]["envelope"]["id"], json!(id));
+    assert_eq!(o["jobs"][0]["handling"]["state"], "open");
+    assert_eq!(o["inbox"].as_array().unwrap().len(), 2);
+    assert_eq!(o["people"].as_array().unwrap().len(), 3);
+    assert!(o["boards"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|b| b["name"] == "smoko"));
+    // Looking twice shows the same inbox: nothing was marked read.
+    assert_eq!(
+        data(&mut a, json!({ "what": "overview" }))["inbox"],
+        o["inbox"]
+    );
+
+    call(&mut a, "claim", &json!({ "id": id })).unwrap();
+    let t = data(&mut c, json!({ "what": "thread", "id": id }));
+    assert_eq!(t["handling"]["holder"], "alice/desk");
+    assert_eq!(t["posts"].as_array().unwrap().len(), 2);
+    // A claim carries the state of the post it is about.
+    assert_eq!(t["posts"][1]["handling"]["post"], json!(id));
+    assert_eq!(
+        data(&mut c, json!({ "what": "board", "name": "smoko" }))["posts"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+
+    // Direct messages: both sides of the conversation, and nobody else's.
+    let bodies = |v: &serde_json::Value| -> Vec<String> {
+        v["posts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|p| p["post"]["envelope"]["body"].as_str().unwrap().to_string())
+            .collect()
+    };
+    assert_eq!(
+        bodies(&data(&mut a, json!({ "what": "direct", "with": "bob" }))),
+        ["A word in private", "Go on"]
+    );
+    assert_eq!(
+        bodies(&data(
+            &mut a,
+            json!({ "what": "direct", "with": "bob/reviewer" })
+        )),
+        ["A word in private", "Go on"]
+    );
+    assert_eq!(
+        bodies(&data(&mut b, json!({ "what": "direct", "with": "alice" }))),
+        ["A word in private", "Go on"]
+    );
+    assert!(bodies(&data(&mut c, json!({ "what": "direct", "with": "alice" }))).is_empty());
+    assert!(bodies(&data(&mut c, json!({ "what": "direct", "with": "bob" }))).is_empty());
+
+    assert!(call(&mut a, "data", &json!({ "what": "everything" })).is_err());
+    assert!(call(
+        &mut a,
+        "data",
+        &json!({ "what": "direct", "with": "nobody" })
+    )
+    .is_err());
+}

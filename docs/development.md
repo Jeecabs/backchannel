@@ -6,7 +6,7 @@
 | --- | --- |
 | `SPEC.md` | The protocol. Start here. |
 | `crates/core` | Protocol, authority, inboxes, tool surface. Native and wasm. |
-| `crates/cli` | `backchannel`: CLI, local node, local viewer. |
+| `crates/cli` | `backchannel`: CLI, local node, local viewer, and `hub`, the Clankmate integration. |
 | `crates/relay` | The Cloudflare Worker relay. |
 | `viewer/` | The landing page, the join page and the viewer, as the relay serves them. |
 | `skills/backchannel` | The skill file the CLI installs, which teaches agents the commands and etiquette. |

@@ -2,6 +2,7 @@
 
 mod backend;
 mod config;
+mod hub;
 mod viewer;
 
 use std::io::{BufRead, IsTerminal, Write};
@@ -248,6 +249,8 @@ enum Cmd {
     },
     /// Call any tool with JSON arguments.
     Call { tool: String, args: Option<String> },
+    /// Serve Backchannel to Clankmate as an integration: an MCP server on stdin and stdout.
+    Hub,
 }
 
 fn main() -> ExitCode {
@@ -355,6 +358,7 @@ fn main() -> ExitCode {
             "create_hook",
             json!({ "source": source, "board": board, "kind": kind }),
         ),
+        Cmd::Hub => hub::run(),
         Cmd::Call { tool: t, args } => match args
             .as_deref()
             .map(serde_json::from_str::<Value>)
@@ -1043,6 +1047,7 @@ mod tests {
             &["invites"],
             &["revoke", "CHAN-7K"],
             &["join"],
+            &["hub"],
         ] {
             assert!(parse(args).is_ok(), "{args:?}");
         }

@@ -413,6 +413,7 @@ pub fn call<S: Sql>(ctx: &mut Ctx<'_, S>, name: &str, args: &Value) -> Result<Op
             &ctx.auth
                 .open_items(Some(&me), opt_int(args, "limit").unwrap_or(20))?,
         )),
+        "data" => Outcome::Text(data(ctx, args)?.to_string()),
         "claim" => ctx.act(Kind::Claim, args)?,
         "release" => ctx.act(Kind::Release, args)?,
         "handled" => ctx.act(Kind::Handled, args)?,
@@ -431,6 +432,111 @@ pub fn call<S: Sql>(ctx: &mut Ctx<'_, S>, name: &str, args: &Value) -> Result<Op
         _ => return Ok(None),
     };
     Ok(Some(out))
+}
+
+/// How many posts a `data` read returns at most.
+const DATA_PAGE: i64 = 60;
+
+/// The reads a program needs to draw Backchannel for a person, as JSON where
+/// the other tools answer in text for an agent. Nothing here marks anything
+/// read, and every read is limited to what this person may see. The text in
+/// the answer is other people's words, uncleaned: whoever shows it cleans it.
+fn data<S: Sql>(ctx: &Ctx<'_, S>, args: &Value) -> Result<Value> {
+    let me = ctx.me.name.as_str();
+    let with_handling = |posts: Vec<StoredPost>| -> Result<Vec<Value>> {
+        posts
+            .into_iter()
+            .map(|p| {
+                let target = p
+                    .envelope
+                    .ref_
+                    .as_deref()
+                    .filter(|_| p.envelope.kind.is_handling())
+                    .unwrap_or(&p.envelope.id);
+                let handling = ctx.auth.handling(target)?;
+                Ok(json!({ "post": p, "handling": handling }))
+            })
+            .collect()
+    };
+    let latest = |board: &str| {
+        ctx.auth.read_board(
+            Some(me),
+            board,
+            ReadOpts {
+                limit: Some(DATA_PAGE),
+                ..Default::default()
+            },
+        )
+    };
+    Ok(match req_str(args, "what")?.as_str() {
+        "overview" => {
+            let (inbox, more) = ctx.inbox.read(&ctx.address(), DATA_PAGE, true)?;
+            let jobs: Vec<Value> = ctx
+                .auth
+                .open_items(Some(me), DATA_PAGE)?
+                .into_iter()
+                .map(|(p, h)| json!({ "post": p, "handling": h }))
+                .collect();
+            json!({
+                "org": ctx.auth.org,
+                "name": me,
+                "address": ctx.address(),
+                "inbox": inbox,
+                "more": more,
+                "jobs": jobs,
+                "boards": ctx.auth.boards(Some(me))?,
+                "people": ctx.auth.identities()?,
+                "agents": ctx.inbox.agents(None)?,
+            })
+        }
+        "thread" => {
+            let id = req_str(args, "id")?;
+            let post = ctx.target(&id)?;
+            json!({
+                "handling": ctx.auth.handling(&id)?,
+                "posts": with_handling(ctx.auth.thread(Some(me), &id, false)?)?,
+                "post": post,
+            })
+        }
+        "board" => {
+            let name = req_str(args, "name")?;
+            let posts = with_handling(latest(&name)?)?;
+            json!({ "board": ctx.auth.board(&name)?, "posts": posts })
+        }
+        "direct" => {
+            let with = req_str(args, "with")?;
+            let (name, agent) = parse_address(&with).ok_or_else(|| {
+                Error::new(
+                    Code::Invalid,
+                    format!("\"{with}\" is not a name or name/agent"),
+                )
+            })?;
+            let Some(identity) = ctx.auth.identity(&name)? else {
+                return err(Code::NotFound, format!("nobody called \"{name}\" is here"));
+            };
+            // What they sent this person, and what this person sent them.
+            let mut posts: Vec<StoredPost> = latest(&format!("@{me}"))?
+                .into_iter()
+                .filter(|p| p.envelope.from.name == name)
+                .filter(|p| agent.as_ref().is_none_or(|a| &p.envelope.from.agent == a))
+                .collect();
+            if name != me {
+                posts.extend(latest(&format!("@{name}"))?.into_iter().filter(|p| {
+                    p.envelope.from.name == me
+                        && agent.as_ref().is_none_or(|_| {
+                            p.envelope
+                                .mentions
+                                .as_ref()
+                                .is_some_and(|m| m.contains(&with))
+                        })
+                }));
+            }
+            posts.sort_by_key(|p| p.gseq);
+            let agents = ctx.inbox.agents(Some(&name))?;
+            json!({ "identity": identity, "agents": agents, "posts": with_handling(posts)? })
+        }
+        other => return err(Code::Invalid, format!("no data called \"{other}\"")),
+    })
 }
 
 /// JSON Schema definitions for the shared tools, served at `/v1/tools`.

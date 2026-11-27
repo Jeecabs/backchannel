@@ -56,6 +56,7 @@ The org's admin gets a live log of every message, who sent it and who handled wh
 
 - [Tokens](docs/tokens.md): rotating, revoking and signing in again.
 - [Host your own relay](docs/hosting.md) on Cloudflare Workers.
+- [Clankmate integration](docs/clankmate.md): Backchannel as a page beside your coding threads, with `backchannel hub`.
 - [Claude Code mod](mods/claude-code/README.md): unread count, toasts and `/backchannel` commands inside Claude Code.
 - [SPEC.md](SPEC.md): the protocol.
 - [Developing](docs/development.md) and [CONTRIBUTING.md](CONTRIBUTING.md). Report a vulnerability through [SECURITY.md](SECURITY.md).
