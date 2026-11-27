@@ -253,6 +253,14 @@ fn the_page_reads_and_acts_on_a_shared_node() {
         assert_eq!(tool_meta(&tools, name)["onItem"], true);
     }
     assert_eq!(tool_meta(&tools, "mark_read")["view"], "inbox");
+    // The host puts an item's title after these, so each reads as a phrase.
+    for (name, title) in [
+        ("reply", "Reply to"),
+        ("post", "Post to"),
+        ("message", "Message"),
+    ] {
+        assert_eq!(tool_meta(&tools, name)["title"], title);
+    }
     assert!(tool_meta(&tools, "remove")["confirm"].is_string());
     let kind = &tool_meta(&tools, "post")["fields"][0];
     assert_eq!(
@@ -304,6 +312,7 @@ fn the_page_reads_and_acts_on_a_shared_node() {
     assert_eq!(first["facts"][0]["text"], "bob/reviewer");
     let inbox = hub.ok("inbox", json!({}));
     assert_eq!(refs(&inbox), std::slice::from_ref(&job));
+    assert_eq!(inbox["items"][0]["title"], "bob/reviewer");
     assert_eq!(inbox["items"][0]["body"], "Can someone review PR 7?");
     assert!(inbox["items"][0]["note"]
         .as_str()
@@ -323,8 +332,14 @@ fn the_page_reads_and_acts_on_a_shared_node() {
     );
     let claimed = hub.ok("item", json!({ "ref": job }));
     assert_eq!(actions(&claimed), ["release", "handled", "start", "reply"]);
-    let label = claimed["item"]["status"]["label"].as_str().unwrap();
-    assert!(label.starts_with("Claimed by alice/desk until "), "{label}");
+    assert_eq!(claimed["item"]["status"]["label"], "Claimed by you");
+    let lease = claimed["item"]["facts"].as_array().unwrap().last().unwrap();
+    assert_eq!(lease["icon"], "clock");
+    let until = lease["text"].as_str().unwrap();
+    assert!(
+        until.starts_with("until ") && until.ends_with(" UTC"),
+        "{until}"
+    );
     assert_eq!(claimed["item"]["status"]["tone"], "active");
     assert_eq!(claimed["live"], true);
     assert_eq!(claimed["timeline"][1]["kind"], "event");
@@ -345,6 +360,7 @@ fn the_page_reads_and_acts_on_a_shared_node() {
         .unwrap()
         .to_string();
     assert!(prompt.contains("SECURITY NOTE"), "{prompt}");
+    assert!(prompt.contains("for the next 30 minutes"));
     assert!(prompt.contains("  | Can someone review PR 7?"));
     assert!(prompt.contains("END OF BACKCHANNEL MESSAGES"));
     assert!(prompt.contains(&format!("backchannel --as desk handled {ask} --note")));
@@ -364,7 +380,7 @@ fn the_page_reads_and_acts_on_a_shared_node() {
     hub.ok("handled", json!({ "ref": job, "note": "Approved." }));
     let handled = hub.ok("item", json!({ "ref": job }));
     assert_eq!(actions(&handled), ["reply"]);
-    assert_eq!(handled["item"]["status"]["label"], "Handled by alice/desk");
+    assert_eq!(handled["item"]["status"]["label"], "Handled by you");
     let last = handled["timeline"].as_array().unwrap().last().unwrap();
     assert_eq!(
         (&last["label"], &last["text"]),
@@ -391,6 +407,8 @@ fn the_page_reads_and_acts_on_a_shared_node() {
     run(&bob, &["--as", "reviewer", "claim", &task]);
     let theirs = hub.ok("item", json!({ "ref": format!("post:{task}") }));
     assert_eq!(actions(&theirs), ["reply"]);
+    assert_eq!(theirs["item"]["status"]["label"], "Claimed by bob/reviewer");
+    assert_eq!(theirs["item"]["note"], "task");
     assert!(hub
         .refused("claim", json!({ "ref": format!("post:{task}") }))
         .contains("bob/reviewer"));
@@ -413,10 +431,7 @@ fn the_page_reads_and_acts_on_a_shared_node() {
     ));
     assert!(hub.ok("start", json!({ "ref": format!("post:{fresh}") }))["prompt"].is_string());
     let started = hub.ok("item", json!({ "ref": format!("post:{fresh}") }));
-    assert!(started["item"]["status"]["label"]
-        .as_str()
-        .unwrap()
-        .starts_with("Claimed by alice/desk"));
+    assert_eq!(started["item"]["status"]["label"], "Claimed by you");
 
     // Boards, and posting to one with a kind.
     assert!(refs(&hub.ok("boards", json!({}))).contains(&"board:smoko".to_string()));

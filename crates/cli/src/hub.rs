@@ -51,6 +51,9 @@ fn poll_every() -> Duration {
 /// How recently someone must have been seen to count as here.
 const HERE_MS: i64 = 5 * 60_000;
 
+/// How long `start` claims a job for: the person still has to read the prompt and send it.
+const START_LEASE_MINUTES: u32 = 30;
+
 const REMOVE_CONFIRM: &str = "Switch Backchannel off on this machine? Your agents stop using it and their skill files are removed. Your name, key and history are kept, so you can switch it back on.";
 
 /// The label the page posts under: `desk`, or $BACKCHANNEL_HUB_LABEL.
@@ -184,18 +187,19 @@ fn full_text(p: &StoredPost) -> String {
     }
 }
 
-fn handling_status(h: &Handling, kind: Kind) -> Option<Value> {
+/// Short enough to sit beside a title: when a claim ends is a fact of its own.
+fn handling_status(h: &Handling, kind: Kind, me: &str) -> Option<Value> {
+    let who = |address: &Option<String>| match address.as_deref() {
+        Some(a) if a == me => "you".to_string(),
+        a => a.unwrap_or_default().to_string(),
+    };
     match h.state {
         HandlingState::Handled => Some(json!({
-            "label": format!("Handled by {}", h.handled_by.clone().unwrap_or_default()),
+            "label": format!("Handled by {}", who(&h.handled_by)),
             "tone": "off",
         })),
         HandlingState::Claimed => Some(json!({
-            "label": format!(
-                "Claimed by {} until {}",
-                h.holder.clone().unwrap_or_default(),
-                h.lease_until.as_deref().map(clock).unwrap_or_default()
-            ),
+            "label": format!("Claimed by {}", who(&h.holder)),
             "tone": "active",
         })),
         HandlingState::Open if matches!(kind, Kind::Ask | Kind::Task) => {
@@ -212,7 +216,8 @@ fn board_label(board: &str) -> String {
     }
 }
 
-fn post_item(p: &StoredPost, h: &Handling) -> Value {
+/// `me` is the page's own address, so its claims read as "you".
+fn post_item(p: &StoredPost, h: &Handling, me: &str) -> Value {
     let e = &p.envelope;
     let mut item = json!({
         "ref": format!("post:{}", e.id),
@@ -227,8 +232,16 @@ fn post_item(p: &StoredPost, h: &Handling) -> Value {
     if e.title.is_some() && !e.body.is_empty() && !p.retracted {
         item["subtitle"] = json!(clip(&clean_line(&e.body), 300));
     }
-    if let Some(status) = handling_status(h, e.kind) {
+    if let Some(status) = handling_status(h, e.kind, me) {
         item["status"] = status;
+    }
+    if let Some(until) = h
+        .lease_until
+        .as_deref()
+        .filter(|_| h.state == HandlingState::Claimed)
+    {
+        let fact = json!({ "text": format!("until {}", clock(until)), "icon": "clock" });
+        item["facts"].as_array_mut().unwrap().push(fact);
     }
     if let Some(ms) = at(&p.received_at) {
         item["at"] = json!(ms);
@@ -242,8 +255,11 @@ fn inbox_view(o: &Overview) -> Value {
         .iter()
         .map(|d| {
             let e = &d.post.envelope;
-            let mut item = post_item(&d.post, &d.handling);
+            let mut item = post_item(&d.post, &d.handling, &o.address);
             item.as_object_mut().unwrap().remove("status");
+            // The text is the body, so the title says who it is from, once.
+            item["title"] = json!(e.from.address());
+            item["facts"] = json!([{ "text": board_label(&e.board), "icon": "link" }]);
             let did = match e.kind {
                 Kind::Claim => Some("claimed a post"),
                 Kind::Release => Some("released a post"),
@@ -280,7 +296,7 @@ fn jobs_view(o: &Overview) -> Value {
         .jobs
         .iter()
         .map(|j| {
-            let mut item = post_item(&j.post, &j.handling);
+            let mut item = post_item(&j.post, &j.handling, &o.address);
             item["group"] = json!(board_label(&j.post.envelope.board));
             item
         })
@@ -495,7 +511,7 @@ fn item(args: &Value) -> Result<Value, String> {
         Ref::Post(id) => {
             let t = thread(&id)?;
             json!({
-                "item": post_item(&t.post, &t.handling),
+                "item": post_item(&t.post, &t.handling, &me),
                 "timeline": timeline(&t.posts, &me),
                 "live": t.handling.state == HandlingState::Claimed,
                 "actions": post_actions(&t.handling, &me),
@@ -690,8 +706,8 @@ fn brief(t: &Thread, me: &str) -> String {
         "Pick up this job from Backchannel, the message board my agents share with other people's. \
 {asker} posted it on {board}. Work out what it needs, do it here, and report back on Backchannel.\n\n\
 {thread}\n\n\
-The job is claimed for you as {me}, for 10 minutes at a time. Use `--as {label}` on these commands so they count as the same claimant:\n\
-- Still working after 10 minutes: `backchannel --as {label} claim {id}` renews the claim.\n\
+The job is claimed for you as {me} for the next {START_LEASE_MINUTES} minutes. Use `--as {label}` on these commands so they count as the same claimant:\n\
+- Still working when that runs out: `backchannel --as {label} claim {id}` renews the claim, 10 minutes at a time.\n\
 - Finished: `backchannel --as {label} handled {id} --note \"<what was done>\"`.\n\
 - Stopping without finishing: `backchannel --as {label} release {id} --note \"<why>\"`, so someone else can take it.\n\
 - A question for whoever asked: `backchannel --as {label} post {post_board} \"<question>\" --ref {id}`.\n\n\
@@ -767,7 +783,10 @@ fn act(name: &str, args: &Value) -> Result<Value, String> {
                     ))
                 }
                 // Open takes the claim; already ours renews it.
-                _ => call("claim", json!({ "id": id }))?,
+                _ => call(
+                    "claim",
+                    json!({ "id": id, "lease_seconds": START_LEASE_MINUTES * 60 }),
+                )?,
             };
             json!({ "prompt": brief(&thread(&id)?, &me) })
         }
@@ -836,10 +855,10 @@ fn tools() -> Value {
         { "name": "item", "description": "A post with its thread, a board's recent posts, or the direct messages with a person or agent.", "inputSchema": with_ref(json!({}), &[]),
           "_meta": role(json!({ "role": "item" })) },
         { "name": "reply", "description": "Replies in a post's thread as the person.", "inputSchema": with_ref(text.clone(), &["text"]),
-          "_meta": role(json!({ "role": "action", "title": "Reply", "kind": "reply", "scope": "operate", "hint": "Everyone who can read the board sees a reply." })) },
+          "_meta": role(json!({ "role": "action", "title": "Reply to", "kind": "reply", "scope": "operate", "hint": "Everyone who can read the board sees a reply." })) },
         { "name": "post", "description": "Posts to a board as the person.",
           "inputSchema": with_ref(json!({ "text": text["text"], "kind": { "type": "string", "enum": ["note", "ask", "task"] } }), &["text"]),
-          "_meta": role(json!({ "role": "action", "title": "Post", "kind": "reply", "scope": "operate",
+          "_meta": role(json!({ "role": "action", "title": "Post to", "kind": "reply", "scope": "operate",
             "hint": "An ask expects a reply. A task is work for someone to claim.",
             "fields": [{ "name": "kind", "label": "Kind", "type": "choice", "options": [
                 { "value": "note", "label": "Note" }, { "value": "ask", "label": "Ask" }, { "value": "task", "label": "Task" } ] }] })) },
